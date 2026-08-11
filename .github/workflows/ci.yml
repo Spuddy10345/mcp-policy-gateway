@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  test:
+    name: test (py${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        include:
+          - python: "3.12"
+            os: macos-latest
+          - python: "3.12"
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --extra dev --python ${{ matrix.python }}
+
+      - name: Test
+        run: uv run pytest --cov=mcp_policy_gateway --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        if: matrix.python == '3.12' && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --extra dev
+
+      - name: Ruff (lint)
+        run: uv run ruff check --output-format=github .
+
+      - name: Ruff (format)
+        run: uv run ruff format --check --diff .
+
+      - name: Pyright
+        run: uv run pyright src
+
+  policies:
+    name: example policies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --extra dev
+
+      # The project's own linter, run against the policies it ships. An example
+      # that would not survive `validate --strict` is not an example worth
+      # shipping.
+      - name: Validate the demo policy
+        run: uv run mcp-policy-gateway validate -c demo/policy.yaml --strict
+
+      - name: Validate the worked example
+        env:
+          HA_URL: http://homeassistant.local:8123
+          HA_TOKEN: not-a-real-token
+        run: uv run mcp-policy-gateway validate -c examples/home-assistant.yaml
+
+      # Assert the policy actually blocks what the README says it blocks.
+      # Exit code 2 means "denied"; anything else is a regression.
+      - name: The demo policy must deny the attack
+        run: |
+          set +e
+          for call in \
+            'ha_remove_entity:{"entity_id":"camera.driveway"}' \
+            'ha_restart:{}' \
+            'ha_call_service:{"domain":"lock","service":"unlock"}'
+          do
+            tool="${call%%:*}"; args="${call#*:}"
+            uv run mcp-policy-gateway explain -c demo/policy.yaml \
+              --policy general-assistant --tool "$tool" --args "$args" >/dev/null
+            if [ $? -ne 2 ]; then
+              echo "::error::policy no longer denies $tool $args"
+              exit 1
+            fi
+            echo "denied as expected: $tool $args"
+          done
+
+      - name: The demo policy must still allow ordinary use
+        run: |
+          uv run mcp-policy-gateway explain -c demo/policy.yaml \
+            --policy general-assistant --tool ha_call_service \
+            --args '{"domain":"light","service":"turn_on"}'
+
+  demo:
+    name: prompt-injection demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --extra dev
+
+      # Exits non-zero if the gateway fails to stop the attack.
+      - name: Run the demo
+        run: uv run demo/prompt_injection.py
+
+      - name: The audit log it produced must verify
+        run: uv run mcp-policy-gateway audit verify demo/audit.jsonl
+
+      - name: A tampered audit log must NOT verify
+        run: |
+          python - <<'EOF'
+          import json, pathlib
+          path = pathlib.Path("demo/audit.jsonl")
+          lines = path.read_text().strip().split("\n")
+          record = json.loads(lines[-1])
+          record["outcome"] = "allowed"
+          lines[-1] = json.dumps(record)
+          path.write_text("\n".join(lines) + "\n")
+          EOF
+          if uv run mcp-policy-gateway audit verify demo/audit.jsonl; then
+            echo "::error::tampering was not detected"
+            exit 1
+          fi
+          echo "tampering detected as expected"
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - run: uv build
+
+      - name: Install the wheel in a clean environment and run it
+        run: |
+          uv venv /tmp/clean
+          VIRTUAL_ENV=/tmp/clean uv pip install dist/*.whl
+          /tmp/clean/bin/mcp-policy-gateway --version
+          /tmp/clean/bin/mcp-policy-gateway validate -c demo/policy.yaml --strict
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
