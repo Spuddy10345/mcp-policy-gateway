@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+uv.lock
+
+# Runtime output — audit logs contain tool arguments and identity names
+*.jsonl
+demo/audit.jsonl
+
+# OS
+.DS_Store
