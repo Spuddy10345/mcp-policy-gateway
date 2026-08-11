@@ -1,0 +1,79 @@
+# Policy used by demo/prompt_injection.py.
+#
+# It describes a general-purpose home assistant: it can read the state of the
+# house, turn lights and climate on and off, and fetch web pages. It cannot
+# delete anything, restart anything, or touch a lock.
+#
+#   mcp-policy-gateway validate -c demo/policy.yaml --strict
+#   mcp-policy-gateway explain  -c demo/policy.yaml --policy general-assistant \
+#       --tool ha_remove_entity --args '{"entity_id": "light.kitchen"}'
+
+version: 1
+mode: enforce
+
+server:
+  name: hass-gateway
+  namespace: never
+
+upstreams:
+  hass:
+    transport: stdio
+    command: "demo-only-not-launched"
+
+audit:
+  path: demo/audit.jsonl
+  hash_chain: true
+
+rate_limits:
+  actuation:
+    rate: 20
+    per: 1m
+    burst: 8
+
+policies:
+  general-assistant:
+    description: >
+      Reads the house, controls lights and climate, browses the web. Cannot
+      delete, restart, or unlock anything.
+    default: deny
+    hide_denied_tools: true
+
+    rules:
+      - name: read-the-house
+        effect: allow
+        tools: [ha_get_state, ha_get_overview, ha_list_entities]
+        reason: read-only introspection
+
+      - name: browse
+        effect: allow
+        tools: [fetch_url]
+        reason: the assistant is expected to read web pages
+
+      # The rule that carries the weight. `ha_call_service` can do nearly
+      # anything to the house depending on one string argument, so the
+      # constraint is on that argument, not on the tool name.
+      - name: safe-domain-actuation
+        effect: allow
+        tools: [ha_call_service]
+        when:
+          args.domain:
+            in: [light, climate, switch, media_player]
+        rate_limits: [actuation]
+        reason: actuation limited to non-safety-critical domains
+
+      # Redundant against `default: deny`, and kept deliberately: these are
+      # the calls most likely to show up in an attack, and an audit log that
+      # names the rule that caught them reads better than one that says
+      # "no rule matched".
+      - name: never-destroy
+        effect: deny
+        tools: [ha_remove_entity, ha_restart, ha_delete_file]
+        reason: destructive operations require a human at a keyboard
+
+      - name: never-unlock
+        effect: deny
+        tools: [ha_call_service]
+        when:
+          args.domain:
+            in: [lock, alarm_control_panel, cover]
+        reason: physical security domains are out of scope for an assistant

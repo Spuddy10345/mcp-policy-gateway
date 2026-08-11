@@ -1,0 +1,205 @@
+# A policy for a Home Assistant MCP server fronted by the gateway.
+#
+# The shape of the problem: the hass MCP server exports ~90 tools, and a good
+# third of them are destructive (ha_restart, ha_remove_entity, ha_remove_device,
+# ha_manage_backup). An assistant that summarises your house needs about eight
+# of them. Everything below is an attempt to write down that gap precisely.
+#
+#   mcp-policy-gateway validate -c examples/home-assistant.yaml --strict
+#   mcp-policy-gateway explain  -c examples/home-assistant.yaml \
+#       --policy general-assistant --tool ha_call_service \
+#       --args '{"domain": "lock", "service": "unlock"}'
+
+version: 1
+mode: enforce
+
+server:
+  name: hass-gateway
+  namespace: never # single upstream: keep tool names identical to hass's own
+  upstream_timeout: 30s
+
+upstreams:
+  hass:
+    transport: stdio
+    command: uvx
+    args: ["hass-mcp"]
+    env:
+      HA_URL: ${HA_URL}
+      HA_TOKEN: ${HA_TOKEN}
+
+audit:
+  path: ./audit.jsonl
+  hash_chain: true
+  # ha_eval_template renders arbitrary Jinja against the HA state machine; the
+  # template itself is the interesting part of any incident, but it is also
+  # where a secret would end up if someone templated one in.
+  redact:
+    - args.template
+  include_arguments: true
+
+rate_limits:
+  # Anything that changes physical state. Small bucket, slow refill: a
+  # legitimate assistant turns a handful of things on per minute, and a
+  # runaway loop should hit the wall long before the house does anything
+  # dramatic 300 times.
+  actuation:
+    rate: 20
+    per: 1m
+    burst: 8
+
+  # Writes to configuration. Deliberately punitive.
+  config-writes:
+    rate: 5
+    per: 10m
+    burst: 2
+
+policies:
+  # ---------------------------------------------------------------------
+  general-assistant:
+    description: >
+      Day-to-day assistant. Can read anything and control lights, climate,
+      media and scenes. Cannot touch locks, alarms, covers, or any part of
+      the configuration, and cannot restart or delete anything.
+    default: deny
+    hide_denied_tools: true
+
+    rules:
+      # --- Reads -------------------------------------------------------
+      - name: read-state
+        effect: allow
+        tools:
+          - ha_get_state
+          - ha_get_entity
+          - ha_get_overview
+          - ha_search
+          - ha_get_history
+          - ha_list_floors_areas
+          - ha_list_services
+          - ha_get_device
+          - ha_get_zone
+          - ha_get_todo
+          - ha_get_system_health
+        reason: read-only introspection of the house
+
+      # --- Actuation, constrained by domain ----------------------------
+      #
+      # This is the rule that matters. ha_call_service is one tool that can
+      # do almost anything: `light.turn_on` and `lock.unlock` are the same
+      # call with a different string. Allow/deny at the tool level cannot
+      # tell them apart, which is why the policy language reaches into
+      # arguments at all.
+      - name: safe-domain-actuation
+        effect: allow
+        tools: [ha_call_service, ha_bulk_control]
+        when:
+          args.domain:
+            in: [light, switch, climate, media_player, scene, script, fan, input_boolean]
+          # Belt and braces: the entity must live in the domain that was
+          # named. HA will reject a mismatch itself, but a policy that
+          # trusts an upstream to enforce its own preconditions is a policy
+          # that breaks the day the upstream gets a new shortcut syntax.
+          args.entity_id:
+            matches: "(light|switch|climate|media_player|scene|script|fan|input_boolean)\\..+"
+            optional: true
+        rate_limits: [actuation]
+        reason: actuation limited to non-safety-critical domains
+
+      - name: set-todo-items
+        effect: allow
+        tools: [ha_set_todo_item, ha_remove_todo_item]
+        rate_limits: [actuation]
+        reason: shopping lists are not a security boundary
+
+      # --- Everything else is denied by the policy default -------------
+      #
+      # Explicit denials for the tools most likely to show up in an attack,
+      # so the audit log names them rather than recording "no rule matched".
+      # They are redundant against `default: deny` and that is the point:
+      # if someone later loosens the default, these still hold.
+      - name: never-restart
+        effect: deny
+        tools: [ha_restart, ha_reload_core, ha_manage_addon, ha_manage_updates]
+        reason: assistant has no reason to restart the platform
+
+      - name: never-delete
+        effect: deny
+        tools:
+          - ha_remove_entity
+          - ha_remove_device
+          - ha_remove_area_or_floor
+          - ha_remove_zone
+          - ha_remove_helpers_integrations
+          - ha_config_remove_*
+        reason: destructive; requires the automation-editor policy
+
+      - name: never-unlock
+        effect: deny
+        tools: [ha_call_service, ha_bulk_control]
+        when:
+          args.domain:
+            in: [lock, alarm_control_panel, cover, vacuum, lawn_mower, water_heater]
+        reason: physical security and safety domains are out of scope
+
+  # ---------------------------------------------------------------------
+  automation-editor:
+    description: >
+      For sessions where you are actually building automations. Adds config
+      writes on top of the assistant's capabilities, still without restart,
+      backup or delete.
+    default: deny
+
+    rules:
+      - name: inherit-reads
+        effect: allow
+        tools: [ha_get_*, ha_list_*, ha_search, ha_eval_template]
+        reason: read-only
+
+      - name: automation-authoring
+        effect: allow
+        tools:
+          - ha_config_set_automation
+          - ha_config_get_automation
+          - ha_config_set_script
+          - ha_config_get_script
+          - ha_config_set_scene
+          - ha_get_automation_traces
+        rate_limits: [config-writes]
+        reason: authoring automations is this policy's whole purpose
+
+      - name: actuation-for-testing
+        effect: allow
+        tools: [ha_call_service]
+        when:
+          args.domain:
+            not_in: [lock, alarm_control_panel]
+        rate_limits: [actuation]
+        reason: testing an automation means triggering it
+
+      - name: still-no-restart
+        effect: deny
+        tools: [ha_restart, ha_manage_addon, ha_manage_backup, ha_remove_*]
+        reason: destructive operations stay manual
+
+  # ---------------------------------------------------------------------
+  readonly:
+    description: Strictly observational. Nothing this policy permits changes state.
+    default: deny
+    rules:
+      - name: reads-only
+        effect: allow
+        tools: [ha_get_*, ha_list_*, ha_search]
+        reason: read-only
+      - name: no-writes
+        effect: deny
+        tools: ["*"]
+        reason: readonly policy
+
+# Tokens are only needed for HTTP transport; under stdio the client picks a
+# policy at launch with --policy. Generate one with:
+#
+#   mcp-policy-gateway token new laptop --policy general-assistant
+#
+# tokens:
+#   - name: laptop
+#     policy: general-assistant
+#     sha256: 0000000000000000000000000000000000000000000000000000000000000000
