@@ -93,8 +93,19 @@ was not reading the web page.
 
 ## Install
 
+Not on PyPI yet. From a checkout:
+
 ```bash
-uv tool install mcp-policy-gateway     # or: pipx install mcp-policy-gateway
+git clone https://github.com/Spuddy10345/mcp-policy-gateway
+cd mcp-policy-gateway
+uv sync --extra dev
+uv run mcp-policy-gateway --help
+```
+
+Or install the built wheel as a standalone tool:
+
+```bash
+uv build && uv tool install dist/*.whl
 ```
 
 ## Use
