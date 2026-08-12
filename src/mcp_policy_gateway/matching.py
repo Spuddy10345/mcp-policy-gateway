@@ -56,7 +56,9 @@ class MatchContext:
             return self.prompt
         if name == "upstream":
             return self.upstream
-        raise SelectorError(f"unknown selector root {name!r}; expected 'args', 'tool', 'resource', 'prompt' or 'upstream'")
+        raise SelectorError(
+            f"unknown selector root {name!r}; expected 'args', 'tool', 'resource', 'prompt' or 'upstream'"
+        )
 
 
 def parse_selector(selector: str) -> list[str | int]:

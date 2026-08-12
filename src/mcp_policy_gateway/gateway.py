@@ -342,7 +342,6 @@ class Gateway:
         )
         await self.audit.write(record)
 
-
     async def _handle_list_resources(
         self, context: RequestContext, params: types.PaginatedRequestParams | None
     ) -> types.ListResourcesResult:
@@ -357,9 +356,7 @@ class Gateway:
         catalogue = await self.pool.catalogue_resources()
         if policy.hide_denied_resources:
             visible = [
-                res
-                for name, res in catalogue
-                if self.engine.is_resource_visible(policy, str(res.uri), name)
+                res for name, res in catalogue if self.engine.is_resource_visible(policy, str(res.uri), name)
             ]
         else:
             visible = [res for name, res in catalogue]
@@ -376,7 +373,9 @@ class Gateway:
             identity = self.identity_for(context)
         except AuthenticationError as exc:
             logger.warning("rejected read_resource %r: %s", params.uri, exc)
-            return types.ReadResourceResult(contents=[], _meta={"is_error": True})  # mcp 1.x read doesn't have is_error usually but let's just raise or return empty
+            return types.ReadResourceResult(
+                contents=[], _meta={"is_error": True}
+            )  # mcp 1.x read doesn't have is_error usually but let's just raise or return empty
 
         try:
             policy = self.config.policy_for(identity.policy)
@@ -400,7 +399,7 @@ class Gateway:
 
         if str(params.uri) not in self.pool._resource_routes:
             await self.pool.catalogue_resources()
-        
+
         upstream = self.pool._resource_routes.get(str(params.uri))
         if not upstream:
             error_msg = f"unknown resource {params.uri!r}"
@@ -460,7 +459,9 @@ class Gateway:
         await self._record(
             identity,
             outcome="dry-run-allowed" if mode == "dry-run" and not decision.allowed else outcome,
-            reason=decision.reason if mode != "dry-run" or decision.allowed else f"DRY-RUN: would deny ({decision.reason})",
+            reason=decision.reason
+            if mode != "dry-run" or decision.allowed
+            else f"DRY-RUN: would deny ({decision.reason})",
             target=str(params.uri),
             upstream=upstream,
             arguments=None,
@@ -574,7 +575,9 @@ class Gateway:
                     started=started,
                     event="prompts/get",
                 )
-                return types.GetPromptResult(description=_refusal_text(target.gateway_name, decision), messages=[])
+                return types.GetPromptResult(
+                    description=_refusal_text(target.gateway_name, decision), messages=[]
+                )
 
         outcome: Outcome = "allowed"
         error: str | None = None
@@ -588,7 +591,9 @@ class Gateway:
         await self._record(
             identity,
             outcome="dry-run-allowed" if mode == "dry-run" and not decision.allowed else outcome,
-            reason=decision.reason if mode != "dry-run" or decision.allowed else f"DRY-RUN: would deny ({decision.reason})",
+            reason=decision.reason
+            if mode != "dry-run" or decision.allowed
+            else f"DRY-RUN: would deny ({decision.reason})",
             target=target.gateway_name,
             upstream=target.upstream,
             arguments=arguments,

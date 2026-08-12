@@ -50,7 +50,6 @@ CONFIG = {
 }
 
 
-
 @asynccontextmanager
 async def serving(upstream: FakeUpstream, config_data: dict | None = None) -> AsyncIterator[tuple[Any, str]]:
     """Run the gateway over HTTP using ASGITransport; yield (app, url)."""

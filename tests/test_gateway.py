@@ -9,15 +9,14 @@ from __future__ import annotations
 
 from itertools import pairwise
 
+import mcp.types as types
 import pytest
 
 from conftest import make_config, running_gateway, text_of
-import mcp.types as types
 from mcp_policy_gateway.config import AuditConfig
 from mcp_policy_gateway.identity import Identity
 
 ASSISTANT_POLICY = {
-    
     "assistant": {
         "default": "deny",
         "rules": [
@@ -35,16 +34,8 @@ ASSISTANT_POLICY = {
                 "tools": ["ha_restart", "ha_remove_entity"],
                 "reason": "destructive",
             },
-            {
-                "name": "allow-tmp",
-                "effect": "allow",
-                "resources": ["file:///tmp/*"]
-            },
-            {
-                "name": "allow-summarize",
-                "effect": "allow",
-                "prompts": ["summarize"]
-            }
+            {"name": "allow-tmp", "effect": "allow", "resources": ["file:///tmp/*"]},
+            {"name": "allow-summarize", "effect": "allow", "prompts": ["summarize"]},
         ],
     }
 }
@@ -358,7 +349,14 @@ async def test_denial_records_the_constraint_that_failed(fake_upstream, assistan
 
 
 async def test_allowed_resource_reaches_upstream(config, fake_upstream, assistant):
-    fake_upstream.resources = [types.Resource(uri="file:///tmp/allowed.txt", name="Allowed", description="An allowed resource", mimeType="text/plain")]
+    fake_upstream.resources = [
+        types.Resource(
+            uri="file:///tmp/allowed.txt",
+            name="Allowed",
+            description="An allowed resource",
+            mimeType="text/plain",
+        )
+    ]
     async with running_gateway(config, fake_upstream, assistant) as (client, _, audit):
         result = await client.read_resource("file:///tmp/allowed.txt")
 
@@ -367,19 +365,23 @@ async def test_allowed_resource_reaches_upstream(config, fake_upstream, assistan
     assert audit.records[-1]["outcome"] == "allowed"
     assert audit.records[-1]["target"] == "file:///tmp/allowed.txt"
 
+
 async def test_denied_resource_never_reaches_upstream(config, fake_upstream, assistant):
-    fake_upstream.resources = [types.Resource(uri="file:///etc/shadow", name="Shadow", description="Secret", mimeType="text/plain")]
+    fake_upstream.resources = [
+        types.Resource(uri="file:///etc/shadow", name="Shadow", description="Secret", mimeType="text/plain")
+    ]
     async with running_gateway(config, fake_upstream, assistant) as (client, _, audit):
-        try:
-            result = await client.read_resource("file:///etc/shadow")
-        except Exception:
-            pass # MCP client might raise MCPError for unauthorized resource
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            await client.read_resource("file:///etc/shadow")
 
     assert fake_upstream.resource_reads == []
-    
+
     record = audit.records[-1]
     assert record["outcome"] == "denied"
     assert record["target"] == "file:///etc/shadow"
+
 
 async def test_allowed_prompt_reaches_upstream(config, fake_upstream, assistant):
     fake_upstream.prompts = [types.Prompt(name="summarize", description="Summarize something")]
@@ -391,16 +393,17 @@ async def test_allowed_prompt_reaches_upstream(config, fake_upstream, assistant)
     assert audit.records[-1]["outcome"] == "allowed"
     assert audit.records[-1]["target"] == "summarize"
 
+
 async def test_denied_prompt_never_reaches_upstream(config, fake_upstream, assistant):
     fake_upstream.prompts = [types.Prompt(name="secret-prompt", description="Secret prompt")]
     async with running_gateway(config, fake_upstream, assistant) as (client, _, audit):
-        try:
-            result = await client.get_prompt("secret-prompt", arguments={})
-        except Exception:
-            pass # MCP client might raise MCPError for unauthorized prompt
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            await client.get_prompt("secret-prompt", arguments={})
 
     assert fake_upstream.prompt_gets == []
-    
+
     record = audit.records[-1]
     assert record["outcome"] == "denied"
     assert record["target"] == "secret-prompt"

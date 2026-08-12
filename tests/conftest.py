@@ -66,12 +66,15 @@ class FakeUpstream:
         async def on_list_resources(context: Any, params: Any) -> types.ListResourcesResult:
             return types.ListResourcesResult(resources=self.resources)
 
-        async def on_read_resource(context: Any, params: types.ReadResourceRequestParams) -> types.ReadResourceResult:
+        async def on_read_resource(
+            context: Any, params: types.ReadResourceRequestParams
+        ) -> types.ReadResourceResult:
             self.resource_reads.append(params.uri)
             if params.uri in self.failing:
                 raise RuntimeError(f"upstream blew up handling {params.uri}")
             text = self.resource_responses.get(params.uri, f"resource ok: {params.uri}")
-            return types.ReadResourceResult(contents=[types.TextResourceContents(uri=params.uri, text=text, mimeType="text/plain")])
+            content = types.TextResourceContents(uri=params.uri, text=text, mimeType="text/plain")  # type: ignore
+            return types.ReadResourceResult(contents=[content])
 
         async def on_list_prompts(context: Any, params: Any) -> types.ListPromptsResult:
             return types.ListPromptsResult(prompts=self.prompts)
@@ -81,10 +84,11 @@ class FakeUpstream:
             self.prompt_gets.append((params.name, arguments))
             if params.name in self.failing:
                 raise RuntimeError(f"upstream blew up handling {params.name}")
-            messages = self.prompt_responses.get(
-                params.name, 
-                [types.PromptMessage(role="user", content=types.TextContent(type="text", text=f"prompt ok: {params.name}"))]
+
+            default_msg = types.PromptMessage(
+                role="user", content=types.TextContent(type="text", text=f"prompt ok: {params.name}")
             )
+            messages = self.prompt_responses.get(params.name, [default_msg])
             return types.GetPromptResult(description="A fake prompt", messages=messages)
 
         return Server(

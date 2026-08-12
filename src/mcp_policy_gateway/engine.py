@@ -96,15 +96,21 @@ class PolicyEngine:
 
     def is_visible(self, policy: Policy, tool: str, upstream: str) -> bool:
         """Whether `tool` may appear in `tools/list` for this policy."""
-        return self._evaluate_visibility_probe(policy, MatchContext(tool=tool, upstream=upstream, arguments={}))
+        return self._evaluate_visibility_probe(
+            policy, MatchContext(tool=tool, upstream=upstream, arguments={})
+        )
 
     def is_resource_visible(self, policy: Policy, resource: str, upstream: str) -> bool:
         """Whether `resource` may appear in `resources/list` for this policy."""
-        return self._evaluate_visibility_probe(policy, MatchContext(resource=resource, upstream=upstream, arguments={}))
+        return self._evaluate_visibility_probe(
+            policy, MatchContext(resource=resource, upstream=upstream, arguments={})
+        )
 
     def is_prompt_visible(self, policy: Policy, prompt: str, upstream: str) -> bool:
         """Whether `prompt` may appear in `prompts/list` for this policy."""
-        return self._evaluate_visibility_probe(policy, MatchContext(prompt=prompt, upstream=upstream, arguments={}))
+        return self._evaluate_visibility_probe(
+            policy, MatchContext(prompt=prompt, upstream=upstream, arguments={})
+        )
 
     def _evaluate_visibility_probe(self, policy: Policy, probe: MatchContext) -> bool:
         for rule in policy.rules:
@@ -167,14 +173,18 @@ def visible_tools(engine: PolicyEngine, policy: Policy, tools: Iterable[tuple[st
     return [tool for name, upstream, tool in tools if engine.is_visible(policy, name, upstream)]
 
 
-def visible_resources(engine: PolicyEngine, policy: Policy, resources: Iterable[tuple[str, str, Any]]) -> list[Any]:
+def visible_resources(
+    engine: PolicyEngine, policy: Policy, resources: Iterable[tuple[str, str, Any]]
+) -> list[Any]:
     """Filter `(gateway_name, upstream_name, resource)` triples down to what a policy shows."""
     if not policy.hide_denied_resources:
         return [res for _, _, res in resources]
     return [res for name, upstream, res in resources if engine.is_resource_visible(policy, name, upstream)]
 
 
-def visible_prompts(engine: PolicyEngine, policy: Policy, prompts: Iterable[tuple[str, str, Any]]) -> list[Any]:
+def visible_prompts(
+    engine: PolicyEngine, policy: Policy, prompts: Iterable[tuple[str, str, Any]]
+) -> list[Any]:
     """Filter `(gateway_name, upstream_name, prompt)` triples down to what a policy shows."""
     if not policy.hide_denied_prompts:
         return [prompt for _, _, prompt in prompts]

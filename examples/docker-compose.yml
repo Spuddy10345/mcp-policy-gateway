@@ -1,0 +1,27 @@
+services:
+  # The gateway service stands in front of the upstream server
+  gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    # Expose the gateway on port 8000
+    ports:
+      - "8000:8000"
+    # Mount the policy configuration
+    volumes:
+      - ./home-assistant.yaml:/app/config/policy.yaml:ro
+    # Run in stdio mode (can also run in HTTP mode)
+    command: ["stdio", "-c", "/app/config/policy.yaml", "--mode", "enforce"]
+    # Pass necessary environment variables (e.g. upstream tokens)
+    environment:
+      - HA_URL=${HA_URL:-http://host.docker.internal:8123}
+      - HA_TOKEN=${HA_TOKEN:-your_long_lived_access_token}
+    
+    # If the upstream server is also in this docker-compose, depend on it:
+    # depends_on:
+    #   - upstream-mcp-server
+
+  # Example upstream server (e.g. if you are running an MCP server in Docker too)
+  # upstream-mcp-server:
+  #   image: ghcr.io/spuddy10345/example-mcp-server
+  #   ...

@@ -112,7 +112,7 @@ class UpstreamConnection:
         arguments: dict[str, Any] | None,
         *,
         # A deadline enforced here with a cancel scope, not a value handed onward.
-        timeout: float,  # noqa: ASYNC109
+        timeout: float,  # noqa: ASYNC109  # noqa: ASYNC109
     ) -> types.CallToolResult:
         with anyio.fail_after(timeout):
             return await self.client.call_tool(name, arguments)
@@ -121,7 +121,7 @@ class UpstreamConnection:
         self,
         uri: str,
         *,
-        timeout: float,
+        timeout: float,  # noqa: ASYNC109
     ) -> types.ReadResourceResult:
         with anyio.fail_after(timeout):
             return await self.client.read_resource(uri)
@@ -131,7 +131,7 @@ class UpstreamConnection:
         name: str,
         arguments: dict[str, str] | None,
         *,
-        timeout: float,
+        timeout: float,  # noqa: ASYNC109
     ) -> types.GetPromptResult:
         with anyio.fail_after(timeout):
             return await self.client.get_prompt(name, arguments)
@@ -320,7 +320,9 @@ class UpstreamPool:
                     ", ".join(repr(owner) for owner in owners),
                 )
 
-        valid = [(upstream_name, res) for upstream_name, res in candidates if len(claimants[str(res.uri)]) == 1]
+        valid = [
+            (upstream_name, res) for upstream_name, res in candidates if len(claimants[str(res.uri)]) == 1
+        ]
         self._resource_routes = {str(res.uri): upstream_name for upstream_name, res in valid}
         return valid
 
@@ -386,7 +388,9 @@ class UpstreamPool:
         except KeyError:
             raise UpstreamError(f"unknown prompt {gateway_name!r}") from None
 
-    async def get_prompt(self, target: NamespacedPrompt, arguments: dict[str, str] | None) -> types.GetPromptResult:
+    async def get_prompt(
+        self, target: NamespacedPrompt, arguments: dict[str, str] | None
+    ) -> types.GetPromptResult:
         connection = self._connections.get(target.upstream)
         if connection is None:
             raise UpstreamError(f"upstream {target.upstream!r} is not connected")
