@@ -6,6 +6,7 @@ the project no longer keeps, made in the most prominent place in the README.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +34,7 @@ def demo_run(tmp_path_factory) -> subprocess.CompletedProcess[str]:
         cwd=workdir,
         timeout=120,
         check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     if result.returncode != 0:
         pytest.fail(

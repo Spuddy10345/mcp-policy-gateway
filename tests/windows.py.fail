@@ -1,0 +1,69 @@
+Skip to content
+Spuddy10345
+mcp-policy-gateway
+Repository navigation
+Code
+Issues
+Pull requests
+Agents
+Actions
+Projects
+Wiki
+Security and quality
+Insights
+Settings
+CI
+Merge branch 'main' of https://github.com/Spuddy10345/mcp-policy-gateway #10
+All jobs
+Run details
+Annotations
+1 error and 2 warnings
+test (py3.12, windows-latest)
+failed now in 32s
+Search logs
+1s
+6s
+4s
+5s
+11s
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "D:\a\mcp-policy-gateway\mcp-policy-gateway\demo\prompt_injection.py", line 262, in main
+    _banner("The setup")
+  File "D:\a\mcp-policy-gateway\mcp-policy-gateway\demo\prompt_injection.py", line 342, in _banner
+    print(f"\n{_wrap('1', title)}\n{'\u2500' * max(60, len(title))}")
+  File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 13-72: character maps to <undefined>
+ERROR tests/test_demo.py::test_demo_writes_the_denials_to_the_audit_log - Failed: Demo script failed with 1:
+STDOUT:
+
+STDERR:
+Traceback (most recent call last):
+  File "D:\a\mcp-policy-gateway\mcp-policy-gateway\demo\prompt_injection.py", line 379, in <module>
+    raise SystemExit(asyncio.run(main()))
+                     ^^^^^^^^^^^^^^^^^^^
+  File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "D:\a\mcp-policy-gateway\mcp-policy-gateway\demo\prompt_injection.py", line 262, in main
+    _banner("The setup")
+  File "D:\a\mcp-policy-gateway\mcp-policy-gateway\demo\prompt_injection.py", line 342, in _banner
+    print(f"\n{_wrap('1', title)}\n{'\u2500' * max(60, len(title))}")
+  File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 13-72: character maps to <undefined>
+1 failed, 246 passed, 5 errors in 4.65s
+Error: Process completed with exit code 1.
+0s
+0s
+3s
+0s
