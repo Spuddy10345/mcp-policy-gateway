@@ -1,0 +1,53 @@
+Run uv run pytest --cov=mcp_policy_gateway --cov-report=term-missing --cov-report=xml
+.F...................................................................... [ 28%]
+........................................................................ [ 57%]
+........................................................................ [ 85%]
+....................................                                     [100%]
+================================== FAILURES ===================================
+_____________________ test_log_file_is_not_world_readable _____________________
+
+tmp_path = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-0/test_log_file_is_not_world_rea0')
+
+    async def test_log_file_is_not_world_readable(tmp_path):
+        """It contains tool arguments and identity names."""
+        path = tmp_path / "audit.jsonl"
+        async with AuditLog(AuditConfig(path=path)) as log:
+            await write_all(log, 1)
+    
+>       assert path.stat().st_mode & 0o077 == 0
+E       AssertionError: assert (33206 & 63) == 0
+E        +  where 33206 = os.stat_result(st_mode=33206, st_ino=562949953458854, st_dev=9230925183971590040, st_nlink=1, st_uid=0, st_gid=0, st_size=376, st_atime=1786546951, st_mtime=1786546951, st_ctime=1786546951).st_mode
+E        +    where os.stat_result(st_mode=33206, st_ino=562949953458854, st_dev=9230925183971590040, st_nlink=1, st_uid=0, st_gid=0, st_size=376, st_atime=1786546951, st_mtime=1786546951, st_ctime=1786546951) = stat()
+E        +      where stat = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-0/test_log_file_is_not_world_rea0/audit.jsonl').stat
+
+tests\test_audit.py:61: AssertionError
+=============================== tests coverage ================================
+______________ coverage: platform win32, python 3.12.10-final-0 _______________
+
+Name                                  Stmts   Miss Branch BrPart  Cover   Missing
+---------------------------------------------------------------------------------
+src\mcp_policy_gateway\__init__.py       13      0      0      0   100%
+src\mcp_policy_gateway\__main__.py        5      5      2      0     0%   3-10
+src\mcp_policy_gateway\audit.py         169      8     38      4    94%   104, 120, 181, 184-187, 190, 215, 269
+src\mcp_policy_gateway\cli.py           231     22     50      8    88%   117-121, 131-138, 142-147, 255, 258, 271-273, 325->333, 338, 392, 394-395
+src\mcp_policy_gateway\config.py        268     11     58      6    94%   86->85, 147, 215, 295, 331-336, 380, 412->411, 454
+src\mcp_policy_gateway\engine.py         94     12     40      1    86%   105, 111, 144, 171-173, 180-182, 189-191
+src\mcp_policy_gateway\errors.py         16      6      0      0    62%   27-29, 36-38
+src\mcp_policy_gateway\gateway.py       215     61     32      6    71%   144-149, 216, 282-283, 292, 348-364, 374-376, 382-396, 400->403, 405-418, 427, 454-457, 480-498, 509-511, 515-529, 535-548, 557, 586-589
+src\mcp_policy_gateway\identity.py       87      1     26      0    99%   85
+src\mcp_policy_gateway\lint.py           92      4     50      4    93%   160, 182, 191->190, 202-203
+src\mcp_policy_gateway\matching.py      183     17     92      8    88%   54, 56, 93, 111, 124, 140-141, 143-144, 248-252, 276-277, 282
+src\mcp_policy_gateway\ratelimit.py      76      1     18      1    98%   44
+src\mcp_policy_gateway\redaction.py      78      8     34      3    87%   116-119, 123-126, 130
+src\mcp_policy_gateway\server.py         67     23      4      1    66%   38-49, 54-65, 85-86, 179-187
+src\mcp_policy_gateway\upstream.py      236     27     60     10    85%   65-67, 93->96, 99->102, 167, 293, 305-307, 317, 331, 334, 338, 342-343, 355-357, 373, 384->386, 388-389, 396, 404-405, 412->410, 425-428
+---------------------------------------------------------------------------------
+TOTAL                                  1830    206    504     52    87%
+Coverage XML written to file coverage.xml
+=========================== short test summary info ===========================
+FAILED tests/test_audit.py::test_log_file_is_not_world_readable - AssertionError: assert (33206 & 63) == 0
+ +  where 33206 = os.stat_result(st_mode=33206, st_ino=562949953458854, st_dev=9230925183971590040, st_nlink=1, st_uid=0, st_gid=0, st_size=376, st_atime=1786546951, st_mtime=1786546951, st_ctime=1786546951).st_mode
+ +    where os.stat_result(st_mode=33206, st_ino=562949953458854, st_dev=9230925183971590040, st_nlink=1, st_uid=0, st_gid=0, st_size=376, st_atime=1786546951, st_mtime=1786546951, st_ctime=1786546951) = stat()
+ +      where stat = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-0/test_log_file_is_not_world_rea0/audit.jsonl').stat
+1 failed, 251 passed in 4.96s
+Error: Process completed with exit code 1.

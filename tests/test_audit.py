@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from itertools import pairwise
 
 import pytest
@@ -52,6 +53,7 @@ async def test_records_are_one_json_object_per_line(tmp_path):
     assert [json.loads(line)["target"] for line in lines] == ["tool_0", "tool_1", "tool_2"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="File permissions are POSIX-only")
 async def test_log_file_is_not_world_readable(tmp_path):
     """It contains tool arguments and identity names."""
     path = tmp_path / "audit.jsonl"

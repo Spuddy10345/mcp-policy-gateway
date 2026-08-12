@@ -168,7 +168,7 @@ DENY  ha_call_service  (policy 'general-assistant', upstream 'hass')
 Then point your MCP client at the gateway instead of the server:
 
 ```json
-{
+Preparing PyPi Release{
   "mcpServers": {
     "hass": {
       "command": "mcp-policy-gateway",
