@@ -35,7 +35,7 @@ def demo_run(tmp_path_factory) -> subprocess.CompletedProcess[str]:
     )
     if result.returncode != 0:
         pytest.fail(
-            f"Demo script failed with {result.returncode}:\n"\
+            f"Demo script failed with {result.returncode}:\n"
             f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
         )
     return result
