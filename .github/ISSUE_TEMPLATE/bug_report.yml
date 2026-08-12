@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in the gateway did not behave the way the docs say it should.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        If this is a policy that denies/allows something it shouldn't — i.e. a
+        security bypass — please use **private vulnerability reporting**
+        instead (Security tab → Report a vulnerability), not this form.
+
+  - type: input
+    id: version
+    attributes:
+      label: mcp-policy-gateway version
+      description: "`mcp-policy-gateway --version`, or the commit SHA if running from a checkout."
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Python version and OS
+      placeholder: "e.g. Python 3.12.4, macOS 15 / Ubuntu 22.04 / Docker"
+    validations:
+      required: true
+
+  - type: textarea
+    id: policy
+    attributes:
+      label: Minimal policy.yaml that reproduces it
+      description: Strip it down as far as you can — the smaller the repro, the faster this gets fixed.
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: command
+    attributes:
+      label: What you ran, and what you expected
+      description: Include the exact CLI invocation or client request, and the `explain` output if you have it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: Full output/error, and the relevant audit.jsonl line(s) if applicable.
+    validations:
+      required: true

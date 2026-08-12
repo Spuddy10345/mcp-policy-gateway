@@ -1,0 +1,30 @@
+version: 2
+
+updates:
+  # Runtime and dev dependencies, managed via uv / pyproject.toml + uv.lock.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+      production-dependencies:
+        dependency-type: "production"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"
+
+  # Actions pinned by tag can move under you; keep them current deliberately
+  # rather than by surprise. This is also how a compromised upstream action
+  # gets noticed instead of sitting there silently.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci"

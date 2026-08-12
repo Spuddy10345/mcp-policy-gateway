@@ -1,0 +1,23 @@
+# Each line is a file pattern followed by one or more owners.
+# These owners are requested for review when someone opens a pull request
+# touching matching files. See:
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: everything, unless a more specific rule below overrides it.
+* @Spuddy10345
+
+# The policy engine and matching semantics are the security-critical core.
+# Changes here should not land without a careful read, however small.
+/src/mcp_policy_gateway/engine.py     @Spuddy10345
+/src/mcp_policy_gateway/matching.py   @Spuddy10345
+/src/mcp_policy_gateway/gateway.py    @Spuddy10345
+/src/mcp_policy_gateway/identity.py   @Spuddy10345
+/src/mcp_policy_gateway/audit.py      @Spuddy10345
+/src/mcp_policy_gateway/redaction.py  @Spuddy10345
+
+# The release pipeline is a supply-chain attack surface in its own right.
+/.github/workflows/  @Spuddy10345
+
+# Docs that make security claims should agree with the code that backs them.
+/THREAT_MODEL.md  @Spuddy10345
+/SECURITY.md      @Spuddy10345
