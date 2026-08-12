@@ -44,7 +44,7 @@ class AuditRecord:
     token: str
     policy: str
     upstream: str | None
-    tool: str | None
+    target: str | None
     outcome: Outcome
     reason: str
     mode: str = "enforce"
@@ -161,10 +161,10 @@ class AuditLog:
                 self._stream.flush()
             return payload
 
-    def redact(self, arguments: dict[str, Any] | None, *, tool: str, upstream: str) -> Any:
+    def redact(self, arguments: dict[str, Any] | None, *, target: str, upstream: str) -> Any:
         if arguments is None:
             return None
-        return self._redactor.redact_arguments(arguments, tool=tool, upstream=upstream)
+        return self._redactor.redact_arguments(arguments, target=target, upstream=upstream)
 
 
 def now_iso() -> str:

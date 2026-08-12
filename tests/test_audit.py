@@ -19,14 +19,14 @@ from mcp_policy_gateway.config import AuditConfig
 from mcp_policy_gateway.redaction import Redactor
 
 
-def record(tool: str = "ha_restart", outcome: str = "denied", **overrides) -> AuditRecord:
+def record(target: str = "ha_restart", outcome: str = "denied", **overrides) -> AuditRecord:
     data = {
         "timestamp": now_iso(),
         "event": "tools/call",
         "token": "assistant",
         "policy": "general",
         "upstream": "hass",
-        "tool": tool,
+        "target": target,
         "outcome": outcome,
         "reason": "destructive",
     }
@@ -36,7 +36,7 @@ def record(tool: str = "ha_restart", outcome: str = "denied", **overrides) -> Au
 
 async def write_all(log: AuditLog, count: int) -> None:
     for index in range(count):
-        await log.write(record(tool=f"tool_{index}"))
+        await log.write(record(target=f"tool_{index}"))
 
 
 # ---------------------------------------------------------------- basic output
@@ -49,7 +49,7 @@ async def test_records_are_one_json_object_per_line(tmp_path):
 
     lines = path.read_text().strip().split("\n")
     assert len(lines) == 3
-    assert [json.loads(line)["tool"] for line in lines] == ["tool_0", "tool_1", "tool_2"]
+    assert [json.loads(line)["target"] for line in lines] == ["tool_0", "tool_1", "tool_2"]
 
 
 async def test_log_file_is_not_world_readable(tmp_path):
@@ -210,7 +210,7 @@ def redactor(**overrides) -> Redactor:
 def test_credential_shaped_keys_are_redacted_by_default():
     result = redactor().redact_arguments(
         {"entity_id": "light.kitchen", "api_key": "sk-1234", "password": "hunter2"},
-        tool="t",
+        target="t",
         upstream="u",
     )
     assert result["entity_id"] == "light.kitchen"
@@ -220,21 +220,21 @@ def test_credential_shaped_keys_are_redacted_by_default():
 
 def test_nested_credentials_are_found():
     result = redactor().redact_arguments(
-        {"config": {"auth": {"token": "secret-value"}}}, tool="t", upstream="u"
+        {"config": {"auth": {"token": "secret-value"}}}, target="t", upstream="u"
     )
     assert "secret-value" not in json.dumps(result)
 
 
 def test_configured_selectors_are_redacted():
     result = redactor(redact=["args.template"]).redact_arguments(
-        {"template": "{{ states('sensor.x') }}"}, tool="t", upstream="u"
+        {"template": "{{ states('sensor.x') }}"}, target="t", upstream="u"
     )
     assert result["template"].startswith("[redacted:")
 
 
 def test_wildcard_selectors_redact_every_element():
     result = redactor(redact=["args.items[*].value"]).redact_arguments(
-        {"items": [{"value": "a"}, {"value": "b"}]}, tool="t", upstream="u"
+        {"items": [{"value": "a"}, {"value": "b"}]}, target="t", upstream="u"
     )
     assert all(item["value"].startswith("[redacted:") for item in result["items"])
 
@@ -242,11 +242,11 @@ def test_wildcard_selectors_redact_every_element():
 def test_the_same_value_digests_identically():
     """So an investigator can correlate occurrences without seeing the value."""
     instance = redactor()
-    first = instance.redact_arguments({"password": "same"}, tool="t", upstream="u")
-    second = instance.redact_arguments({"password": "same"}, tool="t", upstream="u")
+    first = instance.redact_arguments({"password": "same"}, target="t", upstream="u")
+    second = instance.redact_arguments({"password": "same"}, target="t", upstream="u")
     assert first["password"] == second["password"]
 
-    different = instance.redact_arguments({"password": "other"}, tool="t", upstream="u")
+    different = instance.redact_arguments({"password": "other"}, target="t", upstream="u")
     assert different["password"] != first["password"]
 
 
@@ -269,14 +269,14 @@ def test_key_from_the_environment_is_stable_across_instances(monkeypatch):
 
 
 def test_long_values_are_truncated():
-    result = redactor(max_value_length=10).redact_arguments({"note": "x" * 100}, tool="t", upstream="u")
+    result = redactor(max_value_length=10).redact_arguments({"note": "x" * 100}, target="t", upstream="u")
     assert result["note"].startswith("x" * 10)
     assert result["note"].endswith("[truncated]")
 
 
 def test_arguments_can_be_dropped_entirely():
     result = redactor(include_arguments=False).redact_arguments(
-        {"password": "hunter2"}, tool="t", upstream="u"
+        {"password": "hunter2"}, target="t", upstream="u"
     )
     assert result == "[arguments not recorded]"
 

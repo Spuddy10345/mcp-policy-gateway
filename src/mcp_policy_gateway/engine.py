@@ -95,42 +95,56 @@ class PolicyEngine:
         )
 
     def is_visible(self, policy: Policy, tool: str, upstream: str) -> bool:
-        """Whether `tool` may appear in `tools/list` for this policy.
+        """Whether `tool` may appear in `tools/list` for this policy."""
+        return self._evaluate_visibility_probe(policy, MatchContext(tool=tool, upstream=upstream, arguments={}))
 
-        Argument-dependent rules cannot be settled without a call to inspect,
-        so this answers the weaker question "could any arguments make this
-        allowed?". A conditionally-denied tool stays listed — the model needs
-        to see it to use it legitimately — while an unconditionally-denied one
-        is never advertised at all.
+    def is_resource_visible(self, policy: Policy, resource: str, upstream: str) -> bool:
+        """Whether `resource` may appear in `resources/list` for this policy."""
+        return self._evaluate_visibility_probe(policy, MatchContext(resource=resource, upstream=upstream, arguments={}))
 
-        Hiding is a usability and blast-radius measure, not the control:
-        `tools/call` is enforced independently, so a client that calls a hidden
-        tool by name is still refused.
-        """
-        probe = MatchContext(tool=tool, upstream=upstream, arguments={})
+    def is_prompt_visible(self, policy: Policy, prompt: str, upstream: str) -> bool:
+        """Whether `prompt` may appear in `prompts/list` for this policy."""
+        return self._evaluate_visibility_probe(policy, MatchContext(prompt=prompt, upstream=upstream, arguments={}))
 
+    def _evaluate_visibility_probe(self, policy: Policy, probe: MatchContext) -> bool:
         for rule in policy.rules:
             if not self._patterns_match(rule, probe):
                 continue
             if not rule.when:
-                # Unconditional: this rule settles the question.
                 return rule.effect == "allow"
             if rule.effect == "allow":
-                # Some arguments might satisfy it.
                 return True
-            # A conditional deny leaves the tool reachable via a later rule.
-
         return policy.default == "allow"
 
     def _patterns_match(self, rule: Rule, context: MatchContext) -> bool:
-        return matches_any(context.tool, rule.tools) and matches_any(context.upstream, rule.upstreams)
+        if not matches_any(context.upstream, rule.upstreams):
+            return False
+
+        if context.tool is not None:
+            if rule.tools is None and (rule.resources is not None or rule.prompts is not None):
+                return False
+            return matches_any(context.tool, rule.tools)
+
+        if context.resource is not None:
+            if rule.resources is None and (rule.tools is not None or rule.prompts is not None):
+                return False
+            return matches_any(context.resource, rule.resources)
+
+        if context.prompt is not None:
+            if rule.prompts is None and (rule.tools is not None or rule.resources is not None):
+                return False
+            return matches_any(context.prompt, rule.prompts)
+
+        return False
 
     def _rule_applies(self, rule: Rule, context: MatchContext) -> _RuleOutcome:
         if not self._patterns_match(rule, context):
             return _RuleOutcome(applies=False)
 
+        target_name = context.tool or context.resource or context.prompt or "target"
+
         if not rule.when:
-            return _RuleOutcome(applies=True, reason=f"tool {context.tool!r} matched")
+            return _RuleOutcome(applies=True, reason=f"{target_name!r} matched")
 
         trace: list[str] = []
         for selector, constraint in rule.when.items():
@@ -151,3 +165,17 @@ def visible_tools(engine: PolicyEngine, policy: Policy, tools: Iterable[tuple[st
     if not policy.hide_denied_tools:
         return [tool for _, _, tool in tools]
     return [tool for name, upstream, tool in tools if engine.is_visible(policy, name, upstream)]
+
+
+def visible_resources(engine: PolicyEngine, policy: Policy, resources: Iterable[tuple[str, str, Any]]) -> list[Any]:
+    """Filter `(gateway_name, upstream_name, resource)` triples down to what a policy shows."""
+    if not policy.hide_denied_resources:
+        return [res for _, _, res in resources]
+    return [res for name, upstream, res in resources if engine.is_resource_visible(policy, name, upstream)]
+
+
+def visible_prompts(engine: PolicyEngine, policy: Policy, prompts: Iterable[tuple[str, str, Any]]) -> list[Any]:
+    """Filter `(gateway_name, upstream_name, prompt)` triples down to what a policy shows."""
+    if not policy.hide_denied_prompts:
+        return [prompt for _, _, prompt in prompts]
+    return [prompt for name, upstream, prompt in prompts if engine.is_prompt_visible(policy, name, upstream)]

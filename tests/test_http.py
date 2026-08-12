@@ -8,11 +8,10 @@ sets of tools, one gateway process.
 
 from __future__ import annotations
 
-import socket
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager, closing
+from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Any
 
-import anyio
 import pytest
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
@@ -51,20 +50,12 @@ CONFIG = {
 }
 
 
-def free_port() -> int:
-    with closing(socket.socket()) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
 
 @asynccontextmanager
-async def serving(upstream: FakeUpstream, config_data: dict | None = None) -> AsyncIterator[str]:
-    """Run the gateway over HTTP on a free port; yield its URL."""
-    import uvicorn
-
+async def serving(upstream: FakeUpstream, config_data: dict | None = None) -> AsyncIterator[tuple[Any, str]]:
+    """Run the gateway over HTTP using ASGITransport; yield (app, url)."""
     config = GatewayConfig.model_validate(config_data or CONFIG)
     upstream_server = upstream.server()
-    port = free_port()
 
     async with AsyncExitStack() as stack:
         pool = await stack.enter_async_context(
@@ -73,26 +64,26 @@ async def serving(upstream: FakeUpstream, config_data: dict | None = None) -> As
         audit = await stack.enter_async_context(AuditLog(AuditConfig(path=None)))
         gateway = Gateway(config, pool, audit)
         app = build_http_app(config, gateway, host="127.0.0.1", path="/mcp")
-
-        server = uvicorn.Server(
-            uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", access_log=False)
-        )
-
-        async with anyio.create_task_group() as group:
-            group.start_soon(server.serve)
-            with anyio.fail_after(10):
-                while not server.started:  # noqa: ASYNC110 - uvicorn exposes a flag, not an event
-                    await anyio.sleep(0.02)
-            try:
-                yield f"http://127.0.0.1:{port}/mcp"
-            finally:
-                server.should_exit = True
+        await stack.enter_async_context(app.router.lifespan_context(app))
+        yield app, "http://127.0.0.1:8080/mcp"
 
 
 @asynccontextmanager
-async def connect(url: str, token: str | None) -> AsyncIterator[Client]:
+async def connect(target: tuple[Any, str] | str, token: str | None) -> AsyncIterator[Client]:
+    import httpx2
+
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    http_client = create_mcp_http_client(headers=headers)
+    if isinstance(target, tuple):
+        app, url = target
+        transport = httpx2.ASGITransport(app=app)
+        http_client = httpx2.AsyncClient(
+            transport=transport,
+            headers=headers,
+            base_url="http://127.0.0.1:8080",
+        )
+    else:
+        url = target
+        http_client = create_mcp_http_client(headers=headers)
     async with Client(streamable_http_client(url, http_client=http_client)) as client:
         yield client
 

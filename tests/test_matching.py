@@ -41,7 +41,7 @@ def check(selector: str, spec: dict, **arguments) -> bool:
         ("args.items[*]", ["args", "items", "*"]),
         ("args.items[0].id", ["args", "items", 0, "id"]),
         ("args.items[-1]", ["args", "items", -1]),
-        ("tool", ["tool"]),
+        ("target", ["target"]),
     ],
 )
 def test_parse_selector(selector, expected):

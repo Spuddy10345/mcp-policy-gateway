@@ -37,9 +37,17 @@ class FakeUpstream:
 
     name: str = "hass"
     tools: list[types.Tool] = field(default_factory=list)
+    resources: list[types.Resource] = field(default_factory=list)
+    prompts: list[types.Prompt] = field(default_factory=list)
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    resource_reads: list[str] = field(default_factory=list)
+    prompt_gets: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     #: Tool name -> response text. Anything not listed echoes its arguments.
     responses: dict[str, str] = field(default_factory=dict)
+    #: Resource URI -> response text.
+    resource_responses: dict[str, str] = field(default_factory=dict)
+    #: Prompt name -> response messages.
+    prompt_responses: dict[str, list[types.PromptMessage]] = field(default_factory=dict)
     #: Tool names that should raise when called.
     failing: set[str] = field(default_factory=set)
 
@@ -55,11 +63,39 @@ class FakeUpstream:
             text = self.responses.get(params.name, f"{params.name} ok: {arguments}")
             return types.CallToolResult(content=[types.TextContent(type="text", text=text)])
 
+        async def on_list_resources(context: Any, params: Any) -> types.ListResourcesResult:
+            return types.ListResourcesResult(resources=self.resources)
+
+        async def on_read_resource(context: Any, params: types.ReadResourceRequestParams) -> types.ReadResourceResult:
+            self.resource_reads.append(params.uri)
+            if params.uri in self.failing:
+                raise RuntimeError(f"upstream blew up handling {params.uri}")
+            text = self.resource_responses.get(params.uri, f"resource ok: {params.uri}")
+            return types.ReadResourceResult(contents=[types.TextResourceContents(uri=params.uri, text=text, mimeType="text/plain")])
+
+        async def on_list_prompts(context: Any, params: Any) -> types.ListPromptsResult:
+            return types.ListPromptsResult(prompts=self.prompts)
+
+        async def on_get_prompt(context: Any, params: types.GetPromptRequestParams) -> types.GetPromptResult:
+            arguments = dict(params.arguments or {})
+            self.prompt_gets.append((params.name, arguments))
+            if params.name in self.failing:
+                raise RuntimeError(f"upstream blew up handling {params.name}")
+            messages = self.prompt_responses.get(
+                params.name, 
+                [types.PromptMessage(role="user", content=types.TextContent(type="text", text=f"prompt ok: {params.name}"))]
+            )
+            return types.GetPromptResult(description="A fake prompt", messages=messages)
+
         return Server(
             name=self.name,
             version="1.0.0",
             on_list_tools=on_list_tools,
             on_call_tool=on_call_tool,
+            on_list_resources=on_list_resources,
+            on_read_resource=on_read_resource,
+            on_list_prompts=on_list_prompts,
+            on_get_prompt=on_get_prompt,
         )
 
     def called(self, tool: str) -> bool:

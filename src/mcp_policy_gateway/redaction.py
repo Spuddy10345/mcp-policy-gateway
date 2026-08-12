@@ -50,12 +50,12 @@ class Redactor:
         mac = hmac.new(self._key, material, hashlib.sha256).hexdigest()
         return f"[redacted:{mac[:16]}]"
 
-    def redact_arguments(self, arguments: dict[str, Any], *, tool: str, upstream: str) -> Any:
+    def redact_arguments(self, arguments: dict[str, Any], *, target: str, upstream: str) -> Any:
         """Return a copy of `arguments` safe to write to disk."""
         if not self._config.include_arguments:
             return "[arguments not recorded]"
 
-        targets = self._selector_targets(arguments, tool=tool, upstream=upstream)
+        targets = self._selector_targets(arguments, tool=target, upstream=upstream)
         return self._walk(arguments, path=("args",), targets=targets)
 
     def _selector_targets(

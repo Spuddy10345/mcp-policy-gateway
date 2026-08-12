@@ -193,6 +193,10 @@ class Rule(StrictModel):
     #: Glob patterns matched against the gateway-facing tool name. Omitted
     #: means "every tool".
     tools: list[str] | None = None
+    #: Glob patterns matched against the resource URI. Omitted means "every resource".
+    resources: list[str] | None = None
+    #: Glob patterns matched against the prompt name. Omitted means "every prompt".
+    prompts: list[str] | None = None
     #: Glob patterns matched against the upstream name.
     upstreams: list[str] | None = None
     #: Selector path -> constraint. All entries must hold for the rule to match.
@@ -210,7 +214,7 @@ class Rule(StrictModel):
             return {k: _coerce_constraint(v) for k, v in value.items()}
         return value
 
-    @field_validator("tools", "upstreams")
+    @field_validator("tools", "resources", "prompts", "upstreams")
     @classmethod
     def _reject_empty_pattern_list(cls, value: list[str] | None) -> list[str] | None:
         if value is not None and not value:
@@ -233,6 +237,10 @@ class Policy(StrictModel):
     #: compromised or injected model never learns they exist. Defence in
     #: depth: `tools/call` is enforced regardless of this setting.
     hide_denied_tools: bool = True
+    #: Hide resources this policy would deny from `resources/list`.
+    hide_denied_resources: bool = True
+    #: Hide prompt templates this policy would deny from `prompts/list`.
+    hide_denied_prompts: bool = True
     #: Override the gateway-wide mode for this policy.
     mode: Mode | None = None
 

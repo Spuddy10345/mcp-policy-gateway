@@ -301,7 +301,7 @@ def _audit_verify(args: argparse.Namespace) -> int:
 
 def _audit_summary(args: argparse.Namespace) -> int:
     outcomes: Counter[str] = Counter()
-    tools: Counter[str] = Counter()
+    targets: Counter[str] = Counter()
     tokens: Counter[str] = Counter()
     denials: list[dict[str, Any]] = []
 
@@ -310,7 +310,7 @@ def _audit_summary(args: argparse.Namespace) -> int:
         if args.outcome and outcome != args.outcome:
             continue
         outcomes[outcome] += 1
-        tools[str(record.get("tool", "?"))] += 1
+        targets[str(record.get("target", "?"))] += 1
         tokens[str(record.get("token", "?"))] += 1
         if outcome in ("denied", "rate_limited"):
             denials.append(record)
@@ -319,7 +319,7 @@ def _audit_summary(args: argparse.Namespace) -> int:
     print(f"{args.path}: {total} record(s)\n")
 
     _print_counter("by outcome", outcomes)
-    _print_counter("by tool", tools, limit=10)
+    _print_counter("by target", targets, limit=10)
     _print_counter("by token", tokens, limit=10)
 
     if denials:
@@ -327,7 +327,7 @@ def _audit_summary(args: argparse.Namespace) -> int:
         for record in denials[-5:]:
             print(
                 f"  {record.get('timestamp')}  {record.get('token')}  "
-                f"{record.get('tool')}  {record.get('reason')}"
+                f"{record.get('target')}  {record.get('reason')}"
             )
 
     return EXIT_OK

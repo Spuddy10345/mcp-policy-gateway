@@ -121,6 +121,8 @@ def build_http_app(config: GatewayConfig, gateway: Gateway, *, host: str, path: 
     Every request must carry a token that maps to a configured policy; there is
     no anonymous path, and no default identity to fall back to.
     """
+    from mcp.server.transport_security import TransportSecuritySettings
+
     registry = TokenRegistry(config.tokens)
     if not registry:
         raise ConfigError(
@@ -132,10 +134,35 @@ def build_http_app(config: GatewayConfig, gateway: Gateway, *, host: str, path: 
     # same registry the middleware screens with.
     gateway.registry = registry
 
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            host,
+            f"{host}:*",
+            "localhost",
+            "localhost:*",
+            "127.0.0.1",
+            "127.0.0.1:*",
+            "[::1]",
+            "[::1]:*",
+        ],
+        allowed_origins=[
+            f"http://{host}",
+            f"http://{host}:*",
+            "http://localhost",
+            "http://localhost:*",
+            "http://127.0.0.1",
+            "http://127.0.0.1:*",
+            "http://[::1]",
+            "http://[::1]:*",
+        ],
+    )
+
     app = gateway.build_server().streamable_http_app(
         streamable_http_path=path,
         host=host,
         stateless_http=False,
+        transport_security=transport_security,
     )
     app.add_middleware(BearerAuthMiddleware, registry=registry)
     return app

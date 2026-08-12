@@ -15,7 +15,7 @@ is the entire point of writing the rules down.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Any
 
@@ -39,18 +39,24 @@ class SelectorError(ValueError):
 class MatchContext:
     """Everything a rule may be written against."""
 
-    tool: str
     upstream: str
-    arguments: dict[str, Any]
+    tool: str | None = None
+    resource: str | None = None
+    prompt: str | None = None
+    arguments: dict[str, Any] = field(default_factory=dict)
 
     def root(self, name: str) -> Any:
         if name == "args":
             return self.arguments
         if name == "tool":
             return self.tool
+        if name == "resource":
+            return self.resource
+        if name == "prompt":
+            return self.prompt
         if name == "upstream":
             return self.upstream
-        raise SelectorError(f"unknown selector root {name!r}; expected 'args', 'tool' or 'upstream'")
+        raise SelectorError(f"unknown selector root {name!r}; expected 'args', 'tool', 'resource', 'prompt' or 'upstream'")
 
 
 def parse_selector(selector: str) -> list[str | int]:

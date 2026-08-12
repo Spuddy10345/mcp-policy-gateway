@@ -214,7 +214,7 @@ async def audit_path(tmp_path):
                     token="assistant",
                     policy="assistant",
                     upstream="hass",
-                    tool="ha_get_state" if index else "ha_restart",
+                    target="ha_get_state" if index else "ha_restart",
                     outcome="allowed" if index else "denied",
                     reason="destructive" if not index else "ok",
                 )

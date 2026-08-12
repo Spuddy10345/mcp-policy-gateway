@@ -294,7 +294,7 @@ async def main() -> int:
     _banner("What the gateway wrote down")
     for record in audit.records:
         if record["outcome"] == "denied":
-            print(f"  {_dim(record['timestamp'])}  {_red('DENY')}  {record['tool']}")
+            print(f"  {_dim(record['timestamp'])}  {_red('DENY')}  {record['target']}")
             print(f"      rule:   {record['rule']}")
             print(f"      reason: {record['reason']}")
     print(f"\n  {len(audit.records)} records written to {CONFIG_PATH.parent / 'audit.jsonl'}, hash-chained.")

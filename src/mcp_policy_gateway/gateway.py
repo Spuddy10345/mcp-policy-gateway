@@ -87,6 +87,10 @@ class Gateway:
             instructions=self.config.server.instructions or self._default_instructions(),
             on_list_tools=self._handle_list_tools,
             on_call_tool=self._handle_call_tool,
+            on_list_resources=self._handle_list_resources,
+            on_read_resource=self._handle_read_resource,
+            on_list_prompts=self._handle_list_prompts,
+            on_get_prompt=self._handle_get_prompt,
         )
 
     def _default_instructions(self) -> str:
@@ -155,7 +159,7 @@ class Gateway:
                 identity,
                 outcome="error",
                 reason=str(exc),
-                tool=params.name,
+                target=params.name,
                 upstream=None,
                 arguments=None,
                 mode=self.config.mode,
@@ -173,7 +177,7 @@ class Gateway:
                 identity,
                 outcome="error",
                 reason=str(exc),
-                tool=params.name,
+                target=params.name,
                 upstream=None,
                 arguments=None,
                 mode=mode,
@@ -200,7 +204,7 @@ class Gateway:
                     identity,
                     outcome="rate_limited",
                     reason=reason,
-                    tool=target.gateway_name,
+                    target=target.gateway_name,
                     upstream=target.upstream,
                     arguments=arguments,
                     mode=mode,
@@ -245,7 +249,7 @@ class Gateway:
             identity,
             outcome="denied",
             reason=decision.reason,
-            tool=target.gateway_name,
+            target=target.gateway_name,
             upstream=target.upstream,
             arguments=arguments,
             mode=mode,
@@ -291,7 +295,7 @@ class Gateway:
             identity,
             outcome=outcome,
             reason=decision.reason if not forced else f"DRY-RUN: would deny ({decision.reason})",
-            tool=target.gateway_name,
+            target=target.gateway_name,
             upstream=target.upstream,
             arguments=arguments,
             mode=mode,
@@ -308,7 +312,7 @@ class Gateway:
         *,
         outcome: Outcome,
         reason: str,
-        tool: str | None,
+        target: str | None,
         upstream: str | None,
         arguments: dict[str, Any] | None,
         mode: str,
@@ -317,25 +321,285 @@ class Gateway:
         trace: list[str] | None = None,
         request_id: str | None = None,
         error: str | None = None,
+        event: str = "tools/call",
     ) -> None:
         record = AuditRecord(
             timestamp=now_iso(),
-            event="tools/call",
+            event=event,
             token=identity.name,
             policy=identity.policy,
             upstream=upstream,
-            tool=tool,
+            target=target,
             outcome=outcome,
             reason=reason,
             mode=mode,
             rule=rule,
-            arguments=self.audit.redact(arguments, tool=tool or "", upstream=upstream or ""),
+            arguments=self.audit.redact(arguments, target=target or "", upstream=upstream or ""),
             duration_ms=round((time.perf_counter() - started) * 1000, 3),
             request_id=request_id,
             error=error,
             trace=trace or [],
         )
         await self.audit.write(record)
+
+
+    async def _handle_list_resources(
+        self, context: RequestContext, params: types.PaginatedRequestParams | None
+    ) -> types.ListResourcesResult:
+        del params
+        try:
+            identity = self.identity_for(context)
+            policy = self.config.policy_for(identity.policy)
+        except (AuthenticationError, ConfigError) as exc:
+            logger.warning("listing resources for an unresolvable caller: %s", exc)
+            return types.ListResourcesResult(resources=[])
+
+        catalogue = await self.pool.catalogue_resources()
+        if policy.hide_denied_resources:
+            visible = [
+                res
+                for name, res in catalogue
+                if self.engine.is_resource_visible(policy, str(res.uri), name)
+            ]
+        else:
+            visible = [res for name, res in catalogue]
+
+        return types.ListResourcesResult(resources=visible)
+
+    async def _handle_read_resource(
+        self, context: RequestContext, params: types.ReadResourceRequestParams
+    ) -> types.ReadResourceResult:
+        started = time.perf_counter()
+        request_id = str(context.request_id) if context.request_id is not None else None
+
+        try:
+            identity = self.identity_for(context)
+        except AuthenticationError as exc:
+            logger.warning("rejected read_resource %r: %s", params.uri, exc)
+            return types.ReadResourceResult(contents=[], _meta={"is_error": True})  # mcp 1.x read doesn't have is_error usually but let's just raise or return empty
+
+        try:
+            policy = self.config.policy_for(identity.policy)
+        except ConfigError as exc:
+            logger.error("token %r references %s", identity.name, exc)
+            await self._record(
+                identity,
+                outcome="error",
+                reason=str(exc),
+                target=str(params.uri),
+                upstream=None,
+                arguments=None,
+                mode=self.config.mode,
+                request_id=request_id,
+                started=started,
+                event="resources/read",
+            )
+            return types.ReadResourceResult(contents=[])
+
+        mode = self.config.effective_mode(policy)
+
+        if str(params.uri) not in self.pool._resource_routes:
+            await self.pool.catalogue_resources()
+        
+        upstream = self.pool._resource_routes.get(str(params.uri))
+        if not upstream:
+            error_msg = f"unknown resource {params.uri!r}"
+            await self._record(
+                identity,
+                outcome="error",
+                reason=error_msg,
+                target=str(params.uri),
+                upstream=None,
+                arguments=None,
+                mode=mode,
+                request_id=request_id,
+                started=started,
+                event="resources/read",
+            )
+            return types.ReadResourceResult(contents=[])
+
+        decision = self.engine.evaluate(
+            policy,
+            MatchContext(resource=str(params.uri), upstream=upstream, arguments={}),
+        )
+
+        if not decision.allowed:
+            if mode == "dry-run":
+                logger.warning(
+                    "dry-run: would have denied %s -> %s (%s)",
+                    identity.name,
+                    params.uri,
+                    decision.describe(),
+                )
+            else:
+                await self._record(
+                    identity,
+                    outcome="denied",
+                    reason=decision.reason,
+                    target=str(params.uri),
+                    upstream=upstream,
+                    arguments=None,
+                    mode=mode,
+                    rule=decision.rule_name,
+                    trace=list(decision.trace),
+                    request_id=request_id,
+                    started=started,
+                    event="resources/read",
+                )
+                return types.ReadResourceResult(contents=[])
+
+        outcome: Outcome = "allowed"
+        error: str | None = None
+        try:
+            result = await self.pool.read_resource(str(params.uri))
+        except Exception as exc:
+            logger.exception("upstream %r raised reading %r", upstream, params.uri)
+            outcome, error = "error", f"{type(exc).__name__}: {exc}"
+            result = types.ReadResourceResult(contents=[])
+
+        await self._record(
+            identity,
+            outcome="dry-run-allowed" if mode == "dry-run" and not decision.allowed else outcome,
+            reason=decision.reason if mode != "dry-run" or decision.allowed else f"DRY-RUN: would deny ({decision.reason})",
+            target=str(params.uri),
+            upstream=upstream,
+            arguments=None,
+            mode=mode,
+            rule=decision.rule_name,
+            request_id=request_id,
+            started=started,
+            error=error,
+            event="resources/read",
+        )
+        return result
+
+    async def _handle_list_prompts(
+        self, context: RequestContext, params: types.PaginatedRequestParams | None
+    ) -> types.ListPromptsResult:
+        del params
+        try:
+            identity = self.identity_for(context)
+            policy = self.config.policy_for(identity.policy)
+        except (AuthenticationError, ConfigError) as exc:
+            logger.warning("listing prompts for an unresolvable caller: %s", exc)
+            return types.ListPromptsResult(prompts=[])
+
+        catalogue = await self.pool.catalogue_prompts()
+        if policy.hide_denied_prompts:
+            visible = [
+                entry
+                for entry in catalogue
+                if self.engine.is_prompt_visible(policy, entry.gateway_name, entry.upstream)
+            ]
+        else:
+            visible = list(catalogue)
+
+        return types.ListPromptsResult(prompts=[entry.as_advertised() for entry in visible])
+
+    async def _handle_get_prompt(
+        self, context: RequestContext, params: types.GetPromptRequestParams
+    ) -> types.GetPromptResult:
+        started = time.perf_counter()
+        request_id = str(context.request_id) if context.request_id is not None else None
+        arguments = params.arguments or {}
+
+        try:
+            identity = self.identity_for(context)
+        except AuthenticationError as exc:
+            logger.warning("rejected get_prompt %r: %s", params.name, exc)
+            return types.GetPromptResult(description="Unauthenticated", messages=[])
+
+        try:
+            policy = self.config.policy_for(identity.policy)
+        except ConfigError as exc:
+            logger.error("token %r references %s", identity.name, exc)
+            await self._record(
+                identity,
+                outcome="error",
+                reason=str(exc),
+                target=params.name,
+                upstream=None,
+                arguments=None,
+                mode=self.config.mode,
+                request_id=request_id,
+                started=started,
+                event="prompts/get",
+            )
+            return types.GetPromptResult(description="Gateway misconfigured", messages=[])
+
+        mode = self.config.effective_mode(policy)
+
+        try:
+            target = await self.pool.resolve_prompt(params.name)
+        except UpstreamError as exc:
+            await self._record(
+                identity,
+                outcome="error",
+                reason=str(exc),
+                target=params.name,
+                upstream=None,
+                arguments=None,
+                mode=mode,
+                request_id=request_id,
+                started=started,
+                event="prompts/get",
+            )
+            return types.GetPromptResult(description=str(exc), messages=[])
+
+        decision = self.engine.evaluate(
+            policy,
+            MatchContext(prompt=target.gateway_name, upstream=target.upstream, arguments=arguments),
+        )
+
+        if not decision.allowed:
+            if mode == "dry-run":
+                logger.warning(
+                    "dry-run: would have denied %s -> %s (%s)",
+                    identity.name,
+                    target.gateway_name,
+                    decision.describe(),
+                )
+            else:
+                await self._record(
+                    identity,
+                    outcome="denied",
+                    reason=decision.reason,
+                    target=target.gateway_name,
+                    upstream=target.upstream,
+                    arguments=arguments,
+                    mode=mode,
+                    rule=decision.rule_name,
+                    trace=list(decision.trace),
+                    request_id=request_id,
+                    started=started,
+                    event="prompts/get",
+                )
+                return types.GetPromptResult(description=_refusal_text(target.gateway_name, decision), messages=[])
+
+        outcome: Outcome = "allowed"
+        error: str | None = None
+        try:
+            result = await self.pool.get_prompt(target, arguments)
+        except Exception as exc:
+            logger.exception("upstream %r raised getting prompt %r", target.upstream, target.upstream_name)
+            outcome, error = "error", f"{type(exc).__name__}: {exc}"
+            result = types.GetPromptResult(description="Upstream error", messages=[])
+
+        await self._record(
+            identity,
+            outcome="dry-run-allowed" if mode == "dry-run" and not decision.allowed else outcome,
+            reason=decision.reason if mode != "dry-run" or decision.allowed else f"DRY-RUN: would deny ({decision.reason})",
+            target=target.gateway_name,
+            upstream=target.upstream,
+            arguments=arguments,
+            mode=mode,
+            rule=decision.rule_name,
+            request_id=request_id,
+            started=started,
+            error=error,
+            event="prompts/get",
+        )
+        return result
 
 
 def _refusal_text(tool: str, decision: Decision) -> str:

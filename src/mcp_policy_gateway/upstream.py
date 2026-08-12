@@ -52,6 +52,21 @@ class NamespacedTool:
         return self.tool.model_copy(update={"name": self.gateway_name})
 
 
+@dataclass(frozen=True)
+class NamespacedPrompt:
+    """An upstream prompt as the gateway presents it."""
+
+    gateway_name: str
+    upstream_name: str
+    upstream: str
+    prompt: types.Prompt
+
+    def as_advertised(self) -> types.Prompt:
+        if self.gateway_name == self.upstream_name:
+            return self.prompt
+        return self.prompt.model_copy(update={"name": self.gateway_name})
+
+
 class UpstreamConnection:
     """One live client session, plus the metadata the gateway caches for it."""
 
@@ -59,6 +74,8 @@ class UpstreamConnection:
         self.name = name
         self.client = client
         self._tools: list[types.Tool] | None = None
+        self._resources: list[types.Resource] | None = None
+        self._prompts: list[types.Prompt] | None = None
 
     async def list_tools(self, *, refresh: bool = False) -> list[types.Tool]:
         """Tools this upstream exports, cached after the first call.
@@ -72,8 +89,22 @@ class UpstreamConnection:
             self._tools = list(result.tools)
         return self._tools
 
+    async def list_resources(self, *, refresh: bool = False) -> list[types.Resource]:
+        if self._resources is None or refresh:
+            result = await self.client.list_resources()
+            self._resources = list(result.resources)
+        return self._resources
+
+    async def list_prompts(self, *, refresh: bool = False) -> list[types.Prompt]:
+        if self._prompts is None or refresh:
+            result = await self.client.list_prompts()
+            self._prompts = list(result.prompts)
+        return self._prompts
+
     def invalidate(self) -> None:
         self._tools = None
+        self._resources = None
+        self._prompts = None
 
     async def call_tool(
         self,
@@ -85,6 +116,25 @@ class UpstreamConnection:
     ) -> types.CallToolResult:
         with anyio.fail_after(timeout):
             return await self.client.call_tool(name, arguments)
+
+    async def read_resource(
+        self,
+        uri: str,
+        *,
+        timeout: float,
+    ) -> types.ReadResourceResult:
+        with anyio.fail_after(timeout):
+            return await self.client.read_resource(uri)
+
+    async def get_prompt(
+        self,
+        name: str,
+        arguments: dict[str, str] | None,
+        *,
+        timeout: float,
+    ) -> types.GetPromptResult:
+        with anyio.fail_after(timeout):
+            return await self.client.get_prompt(name, arguments)
 
 
 class UpstreamPool:
@@ -109,6 +159,8 @@ class UpstreamPool:
         self._connections: dict[str, UpstreamConnection] = {}
         self._exit_stack = AsyncExitStack()
         self._routes: dict[str, NamespacedTool] = {}
+        self._resource_routes: dict[str, str] = {}
+        self._prompt_routes: dict[str, NamespacedPrompt] = {}
 
     @property
     def connections(self) -> dict[str, UpstreamConnection]:
@@ -127,6 +179,8 @@ class UpstreamPool:
     async def __aexit__(self, *exc_info: object) -> None:
         self._connections.clear()
         self._routes.clear()
+        self._resource_routes.clear()
+        self._prompt_routes.clear()
         await self._exit_stack.aclose()
 
     async def _connect(self, name: str, upstream: StdioUpstream | HttpUpstream) -> Client:
@@ -240,12 +294,122 @@ class UpstreamPool:
                 f"upstream {target.upstream!r} did not respond within {self._server_config.upstream_timeout}s"
             ) from exc
 
+    async def catalogue_resources(self, *, refresh: bool = False) -> list[tuple[str, types.Resource]]:
+        """Every resource from every upstream. Returns (upstream_name, Resource)."""
+        candidates: list[tuple[str, types.Resource]] = []
+        claimants: dict[str, list[str]] = {}
+
+        for name, connection in self._connections.items():
+            try:
+                upstream_resources = await connection.list_resources(refresh=refresh)
+            except Exception as exc:
+                logger.warning("upstream %r failed to list resources: %s", name, exc)
+                continue
+
+            for res in upstream_resources:
+                # Need uri cast because pydantic v2 url types are sometimes objects
+                uri_str = str(res.uri)
+                claimants.setdefault(uri_str, []).append(name)
+                candidates.append((name, res))
+
+        for uri_str, owners in claimants.items():
+            if len(owners) > 1:
+                logger.error(
+                    "resource URI collision: %r is exported by %s; all of them are hidden.",
+                    uri_str,
+                    ", ".join(repr(owner) for owner in owners),
+                )
+
+        valid = [(upstream_name, res) for upstream_name, res in candidates if len(claimants[str(res.uri)]) == 1]
+        self._resource_routes = {str(res.uri): upstream_name for upstream_name, res in valid}
+        return valid
+
+    async def read_resource(self, uri: str) -> types.ReadResourceResult:
+        if uri not in self._resource_routes:
+            await self.catalogue_resources()
+        upstream_name = self._resource_routes.get(uri)
+        if not upstream_name:
+            raise UpstreamError(f"unknown resource {uri!r}")
+
+        connection = self._connections.get(upstream_name)
+        if not connection:
+            raise UpstreamError(f"upstream {upstream_name!r} is not connected")
+
+        try:
+            return await connection.read_resource(uri, timeout=self._server_config.upstream_timeout)
+        except TimeoutError as exc:
+            raise UpstreamError(
+                f"upstream {upstream_name!r} did not respond within {self._server_config.upstream_timeout}s"
+            ) from exc
+
+    async def catalogue_prompts(self, *, refresh: bool = False) -> list[NamespacedPrompt]:
+        """Every prompt from every upstream, in the gateway namespace."""
+        candidates: list[NamespacedPrompt] = []
+        claimants: dict[str, list[str]] = {}
+
+        for name, connection in self._connections.items():
+            try:
+                upstream_prompts = await connection.list_prompts(refresh=refresh)
+            except Exception as exc:
+                logger.warning("upstream %r failed to list prompts: %s", name, exc)
+                continue
+
+            for prompt in upstream_prompts:
+                gateway_name = self.namespace_for(name, prompt.name)
+                claimants.setdefault(gateway_name, []).append(name)
+                candidates.append(
+                    NamespacedPrompt(
+                        gateway_name=gateway_name,
+                        upstream_name=prompt.name,
+                        upstream=name,
+                        prompt=prompt,
+                    )
+                )
+
+        for gateway_name, owners in claimants.items():
+            if len(owners) > 1:
+                logger.error(
+                    "prompt name collision: %r is exported by %s; all of them are hidden.",
+                    gateway_name,
+                    ", ".join(repr(owner) for owner in owners),
+                )
+
+        valid = [entry for entry in candidates if len(claimants[entry.gateway_name]) == 1]
+        self._prompt_routes = {entry.gateway_name: entry for entry in valid}
+        return valid
+
+    async def resolve_prompt(self, gateway_name: str) -> NamespacedPrompt:
+        if gateway_name not in self._prompt_routes:
+            await self.catalogue_prompts()
+        try:
+            return self._prompt_routes[gateway_name]
+        except KeyError:
+            raise UpstreamError(f"unknown prompt {gateway_name!r}") from None
+
+    async def get_prompt(self, target: NamespacedPrompt, arguments: dict[str, str] | None) -> types.GetPromptResult:
+        connection = self._connections.get(target.upstream)
+        if connection is None:
+            raise UpstreamError(f"upstream {target.upstream!r} is not connected")
+
+        try:
+            return await connection.get_prompt(
+                target.upstream_name,
+                arguments,
+                timeout=self._server_config.upstream_timeout,
+            )
+        except TimeoutError as exc:
+            raise UpstreamError(
+                f"upstream {target.upstream!r} did not respond within {self._server_config.upstream_timeout}s"
+            ) from exc
+
     def invalidate(self, names: Iterable[str] | None = None) -> None:
         for name in names if names is not None else list(self._connections):
             connection = self._connections.get(name)
             if connection is not None:
                 connection.invalidate()
         self._routes.clear()
+        self._resource_routes.clear()
+        self._prompt_routes.clear()
 
 
 def _upstream_errlog(name: str):
