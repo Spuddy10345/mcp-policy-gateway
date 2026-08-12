@@ -110,7 +110,7 @@ def tool(name: str, description: str = "") -> types.Tool:
     return types.Tool(
         name=name,
         description=description or f"the {name} tool",
-        inputSchema={"type": "object", "properties": {}},
+        input_schema={"type": "object", "properties": {}},
     )
 
 

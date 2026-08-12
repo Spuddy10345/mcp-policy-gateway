@@ -354,7 +354,7 @@ async def test_allowed_resource_reaches_upstream(config, fake_upstream, assistan
             uri="file:///tmp/allowed.txt",
             name="Allowed",
             description="An allowed resource",
-            mimeType="text/plain",
+            mime_type="text/plain",
         )
     ]
     async with running_gateway(config, fake_upstream, assistant) as (client, _, audit):
@@ -368,7 +368,7 @@ async def test_allowed_resource_reaches_upstream(config, fake_upstream, assistan
 
 async def test_denied_resource_never_reaches_upstream(config, fake_upstream, assistant):
     fake_upstream.resources = [
-        types.Resource(uri="file:///etc/shadow", name="Shadow", description="Secret", mimeType="text/plain")
+        types.Resource(uri="file:///etc/shadow", name="Shadow", description="Secret", mime_type="text/plain")
     ]
     async with running_gateway(config, fake_upstream, assistant) as (client, _, audit):
         import contextlib

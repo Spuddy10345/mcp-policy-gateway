@@ -25,7 +25,7 @@ def demo_run(tmp_path_factory) -> subprocess.CompletedProcess[str]:
     """Run the demo once, with its audit log redirected out of the repo."""
     workdir = tmp_path_factory.mktemp("demo")
     (workdir / "demo").mkdir()
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, str(DEMO)],
         capture_output=True,
         text=True,
@@ -33,6 +33,12 @@ def demo_run(tmp_path_factory) -> subprocess.CompletedProcess[str]:
         timeout=120,
         check=False,
     )
+    if result.returncode != 0:
+        pytest.fail(
+            f"Demo script failed with {result.returncode}:\n"\
+            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+    return result
 
 
 def test_demo_exits_successfully(demo_run):
