@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Spuddy10345/mcp-policy-gateway/security/advisories/new
+    about: >-
+      Do not open a public issue for a security bypass or vulnerability.
+      Use private vulnerability reporting instead — see SECURITY.md.
+  - name: Ask a question / discuss a policy design
+    url: https://github.com/Spuddy10345/mcp-policy-gateway/discussions
+    about: For "how would I write a policy for X" or general discussion.
