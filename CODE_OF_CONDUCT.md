@@ -46,16 +46,12 @@ project in public spaces.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the maintainer, [@Spuddy10345](https://github.com/Spuddy10345),
-via a GitHub direct message or by opening a confidential report through
-[private vulnerability reporting](https://github.com/Spuddy10345/mcp-policy-gateway/security/advisories/new)
-if no better channel is available. All complaints will be reviewed and
-investigated promptly and fairly.
-
-> Maintainer note: swap in a real contact email here once you have one you're
-> happy to publish — a lot of Codes of Conduct list one and this repo
-> currently doesn't have anywhere better to point people.
+Instances of abusive, harassing, or otherwise unacceptable behavior should be
+reported confidentially to the project maintainers. This repository does not
+currently have a monitored confidential reporting channel configured. The
+maintainers must enable GitHub Private Vulnerability Reporting or provide a
+monitored private contact channel before this Code of Conduct is published.
+Do not include sensitive details in a public issue.
 
 ## Attribution
 

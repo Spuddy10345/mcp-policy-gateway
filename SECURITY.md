@@ -16,15 +16,14 @@ backport policy yet; fixes land on `main` and ship in the next release.
 
 ## Reporting a vulnerability
 
-**Preferred: GitHub Private Vulnerability Reporting.**
-Go to the [Security tab](https://github.com/Spuddy10345/mcp-policy-gateway/security/advisories)
-of this repository and click **Report a vulnerability**. This opens a private
-advisory visible only to maintainers until a fix is ready — nothing is
-disclosed publicly until you and the maintainer agree it should be.
-
-If that is not available to you for some reason, open a regular GitHub issue
-describing *that* you found something without describing *what*, and ask for
-an alternative private channel.
+**Private reporting is not currently configured for this repository.**
+Maintainers must enable GitHub Private Vulnerability Reporting or provide a
+monitored private contact channel before this policy can accept reports. Do
+not disclose vulnerability details in a public issue. Once enabled, reports
+submitted through GitHub are visible to repository maintainers, the reporter,
+and any collaborators invited to the advisory. Maintainers can publish an
+advisory without the reporter's agreement, so coordinate disclosure with the
+maintainers before sharing details publicly.
 
 Please include, where you can:
 
@@ -45,7 +44,7 @@ Read [THREAT_MODEL.md](THREAT_MODEL.md) first — it draws the line between
 - A policy that should deny a call but allows it (or the reverse, if it fails
   in a way that breaks a legitimate caller in a security-relevant way).
 - A way to make a denied tool reachable anyway — by name, by argument
-  shape, by a upstream-name collision, etc.
+  shape, by an upstream-name collision, etc.
 - A way to make the audit log accept a tampered record as valid, or to make
   credential redaction miss a value it should have caught.
 - Anything in the HTTP transport that lets a request be served under the

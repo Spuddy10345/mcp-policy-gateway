@@ -11,8 +11,6 @@ updates:
         dependency-type: "development"
       production-dependencies:
         dependency-type: "production"
-    labels:
-      - "dependencies"
     commit-message:
       prefix: "deps"
 
@@ -23,8 +21,5 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    labels:
-      - "dependencies"
-      - "ci"
     commit-message:
       prefix: "ci"

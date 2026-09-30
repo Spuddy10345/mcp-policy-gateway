@@ -5,7 +5,8 @@
 ## Checklist
 
 - [ ] `uv run pytest` passes locally, including new tests for the change
-- [ ] `uv run ruff check .` and `uv run pyright src` are clean
+- [ ] `uv run ruff check .`, `uv run ruff format --check --diff .`, and
+      `uv run pyright src` are clean
 - [ ] If this touches `engine.py`, `matching.py`, or `gateway.py`: a test
       asserts the *security-relevant* behaviour, not just that it runs
       (see `tests/test_gateway.py` / `tests/test_matching.py` for the pattern)
