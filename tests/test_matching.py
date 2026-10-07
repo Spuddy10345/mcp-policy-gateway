@@ -105,6 +105,13 @@ def test_present_requires_the_argument_to_exist():
     assert check("args.domain", {"present": True}, service="x") is False
 
 
+def test_negated_presence_is_rejected_rather_than_silently_ignored():
+    # `present: false` / `absent: false` used to be dropped on the floor (fail open).
+    for spec in ({"present": False}, {"absent": False}):
+        with pytest.raises(ValueError, match="ambiguous"):
+            Constraint.model_validate(spec)
+
+
 # ------------------------------------------------------------------- operators
 
 
@@ -197,15 +204,38 @@ def test_any_quantifier_accepts_a_single_passing_element():
     assert check("args.entity_id[*]", spec, entity_id=["lock.front"]) is False
 
 
-def test_failure_detail_names_the_offending_value():
+def test_failure_detail_describes_the_offending_value_without_disclosing_it():
+    # This detail is copied verbatim into the audit log's `trace` and into the
+    # refusal handed back to the caller, neither of which is redacted. It must
+    # say enough to debug the rule and no more.
     result = evaluate_constraint(
         "args.entity_id[*]",
         Constraint.model_validate({"matches": "light\\..*"}),
         context(entity_id=["light.a", "lock.front"]),
     )
     assert not result.satisfied
-    assert "lock.front" in result.detail
-    assert "1 of 2" in result.detail
+    assert "lock.front" not in result.detail
+    assert "args.entity_id[*]" in result.detail  # which selector
+    assert "10-character string" in result.detail  # what kind of value
+    assert "light\\..*" in result.detail  # what was expected
+    assert "1 of 2" in result.detail  # how many failed
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("sk-live-secret", "14-character string"),
+        (42, "a number"),
+        (True, "True"),
+        (None, "None"),
+        (["a", "b"], "2-element list"),
+        ({"k": "v"}, "1 key"),
+    ],
+)
+def test_value_descriptions_never_contain_the_value(value, expected):
+    result = evaluate_constraint("args.x", Constraint(eq="nope"), context(x=value))
+    assert not result.satisfied
+    assert expected in result.detail
 
 
 # ------------------------------------------------------------------ tool globs

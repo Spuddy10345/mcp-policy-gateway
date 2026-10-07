@@ -7,6 +7,7 @@ never reaches the thing that would have executed it.
 
 from __future__ import annotations
 
+import json
 from itertools import pairwise
 
 import mcp.types as types
@@ -407,3 +408,134 @@ async def test_denied_prompt_never_reaches_upstream(config, fake_upstream, assis
     record = audit.records[-1]
     assert record["outcome"] == "denied"
     assert record["target"] == "secret-prompt"
+
+
+# ------------------------------------------------- redaction / policy failures
+
+
+async def test_denial_trace_does_not_leak_argument_values(fake_upstream, assistant):
+    """The trace is written straight to the log, so it must not carry values.
+
+    `arguments` goes through the redactor; `trace` never did, so a secret that
+    failed a constraint was written in the clear two keys away from its own
+    redacted digest.
+    """
+    config = make_config(
+        {
+            "assistant": {
+                "default": "deny",
+                "rules": [
+                    {
+                        "effect": "allow",
+                        "tools": ["ha_call_service"],
+                        "when": {"args.api_key": {"eq": "expected"}},
+                    }
+                ],
+            }
+        }
+    )
+    secret = "sk-live-SUPERSECRET-9999"
+
+    async with running_gateway(config, fake_upstream, assistant) as (client, _, audit):
+        await client.call_tool("ha_call_service", {"api_key": secret})
+
+    record = audit.records[-1]
+    assert record["outcome"] == "denied"
+    assert secret not in json.dumps(record)
+    assert record["arguments"]["api_key"].startswith("[redacted:")
+    # Still useful: which selector failed, and against what.
+    assert any("args.api_key" in line for line in record["trace"])
+
+
+async def test_trace_is_clean_even_when_arguments_are_not_recorded(fake_upstream, assistant):
+    config = make_config(
+        {
+            "assistant": {
+                "default": "deny",
+                "rules": [
+                    {"effect": "allow", "tools": ["ha_call_service"], "when": {"args.token": {"eq": "ok"}}}
+                ],
+            }
+        }
+    )
+    audit_config = AuditConfig(path=None, include_arguments=False)
+
+    async with running_gateway(config, fake_upstream, assistant, audit_config=audit_config) as (
+        client,
+        _,
+        audit,
+    ):
+        await client.call_tool("ha_call_service", {"token": "leaked-value-here"})
+
+    assert "leaked-value-here" not in json.dumps(audit.records[-1])
+
+
+async def test_unevaluatable_policy_denies_and_is_audited(fake_upstream, assistant, monkeypatch):
+    """A policy the engine cannot evaluate must deny, and say so in the log.
+
+    Previously this escaped `evaluate` as a bare exception: the caller got
+    `Internal server error` and nothing was written to the audit log at all.
+    """
+    config = make_config(
+        {"assistant": {"default": "deny", "rules": [{"effect": "allow", "tools": ["ha_get_state"]}]}}
+    )
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("engine fell over")
+
+    monkeypatch.setattr("mcp_policy_gateway.engine.PolicyEngine._evaluate", explode)
+
+    async with running_gateway(config, fake_upstream, assistant) as (client, _, audit):
+        result = await client.call_tool("ha_get_state", {"entity_id": "light.kitchen"})
+
+    assert result.is_error
+    assert not fake_upstream.called("ha_get_state")
+    record = audit.records[-1]
+    assert record["outcome"] == "error"
+    assert "could not be evaluated" in record["reason"]
+    assert "engine fell over" in record["error"]
+
+
+async def test_dry_run_does_not_forward_when_the_policy_cannot_be_evaluated(
+    fake_upstream, assistant, monkeypatch
+):
+    """Dry-run second-guesses verdicts, not the absence of one."""
+    config = make_config(
+        {"assistant": {"default": "deny", "rules": [{"effect": "allow", "tools": ["ha_get_state"]}]}},
+        mode="dry-run",
+    )
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("engine fell over")
+
+    monkeypatch.setattr("mcp_policy_gateway.engine.PolicyEngine._evaluate", explode)
+
+    async with running_gateway(config, fake_upstream, assistant) as (client, _, audit):
+        result = await client.call_tool("ha_get_state", {})
+
+    assert result.is_error
+    assert fake_upstream.calls == []
+    assert audit.records[-1]["outcome"] == "error"
+
+
+async def test_dry_run_records_rate_limits_it_would_have_enforced(fake_upstream, assistant):
+    """Dry-run is read from the audit log, so a would-be block has to appear there."""
+    config = make_config(
+        {
+            "assistant": {
+                "default": "deny",
+                "rules": [{"effect": "allow", "tools": ["ha_get_state"], "rate_limits": ["tight"]}],
+            }
+        },
+        mode="dry-run",
+        rate_limits={"tight": {"rate": 1, "per": "1h", "burst": 1}},
+    )
+
+    async with running_gateway(config, fake_upstream, assistant) as (client, _, audit):
+        await client.call_tool("ha_get_state", {})
+        await client.call_tool("ha_get_state", {})
+
+    assert len(fake_upstream.calls) == 2  # dry-run still forwards
+    assert audit.records[0]["outcome"] == "allowed"
+    assert audit.records[1]["outcome"] == "dry-run-rate-limited"
+    assert "would rate limit" in audit.records[1]["reason"]

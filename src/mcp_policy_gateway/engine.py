@@ -9,14 +9,13 @@ what happens, which matters more than expressive power.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
 
 from .config import Effect, Policy, Rule
 from .matching import MatchContext, evaluate_constraint, matches_any
 
-if TYPE_CHECKING:
-    from collections.abc import Iterable
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -33,6 +32,11 @@ class Decision:
     #: The constraint evaluations that were performed, newest rule last. Kept
     #: for `explain`, and for the audit record when a call is denied.
     trace: tuple[str, ...] = ()
+    #: Set when the policy could not be evaluated at all — a broken selector, a
+    #: bug in an operator. The effect is always `deny`, but this distinguishes
+    #: "the policy said no" from "the policy could not be consulted", which the
+    #: operator needs to see and which dry-run must not wave through.
+    evaluation_error: str | None = None
 
     @property
     def allowed(self) -> bool:
@@ -68,7 +72,27 @@ class PolicyEngine:
     """
 
     def evaluate(self, policy: Policy, context: MatchContext) -> Decision:
-        """Decide whether `context` is permitted under `policy`."""
+        """Decide whether `context` is permitted under `policy`.
+
+        Never raises. A decision point that can throw is a decision point that
+        fails somewhere other than where the decision is recorded: the caller
+        gets a transport error, the audit log gets nothing, and whether the call
+        ran depends on which line the exception came from. Anything unexpected
+        becomes a deny that says so.
+        """
+        try:
+            return self._evaluate(policy, context)
+        except Exception as exc:
+            target = context.tool or context.resource or context.prompt or "<unknown>"
+            logger.exception("policy evaluation failed for %r; denying", target)
+            detail = f"{type(exc).__name__}: {exc}"
+            return Decision(
+                effect="deny",
+                reason=f"policy could not be evaluated ({detail})",
+                evaluation_error=detail,
+            )
+
+    def _evaluate(self, policy: Policy, context: MatchContext) -> Decision:
         trace: list[str] = []
 
         for index, rule in enumerate(policy.rules):
@@ -164,28 +188,3 @@ class PolicyEngine:
             reason="; ".join(detail.removeprefix("PASS ") for detail in trace),
             trace=trace,
         )
-
-
-def visible_tools(engine: PolicyEngine, policy: Policy, tools: Iterable[tuple[str, str, Any]]) -> list[Any]:
-    """Filter `(gateway_name, upstream_name, tool)` triples down to what a policy shows."""
-    if not policy.hide_denied_tools:
-        return [tool for _, _, tool in tools]
-    return [tool for name, upstream, tool in tools if engine.is_visible(policy, name, upstream)]
-
-
-def visible_resources(
-    engine: PolicyEngine, policy: Policy, resources: Iterable[tuple[str, str, Any]]
-) -> list[Any]:
-    """Filter `(gateway_name, upstream_name, resource)` triples down to what a policy shows."""
-    if not policy.hide_denied_resources:
-        return [res for _, _, res in resources]
-    return [res for name, upstream, res in resources if engine.is_resource_visible(policy, name, upstream)]
-
-
-def visible_prompts(
-    engine: PolicyEngine, policy: Policy, prompts: Iterable[tuple[str, str, Any]]
-) -> list[Any]:
-    """Filter `(gateway_name, upstream_name, prompt)` triples down to what a policy shows."""
-    if not policy.hide_denied_prompts:
-        return [prompt for _, _, prompt in prompts]
-    return [prompt for name, upstream, prompt in prompts if engine.is_prompt_visible(policy, name, upstream)]

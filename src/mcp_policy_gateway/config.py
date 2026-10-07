@@ -149,12 +149,37 @@ class Constraint(StrictModel):
             re.compile(value)
         except re.error as exc:
             raise ValueError(f"invalid regular expression {value!r}: {exc}") from exc
+
+        # Refused at load, not bounded at runtime: backtracking is exponential
+        # in the input length, and tool arguments are attacker-influenced
+        # whenever the model reads untrusted content. A pattern like this makes
+        # a ~30-character argument enough to wedge the process.
+        from .matching import unsafe_repetition
+
+        fragment = unsafe_repetition(value)
+        if fragment is not None:
+            raise ValueError(
+                f"regular expression {value!r} can backtrack catastrophically on {fragment!r}: "
+                "an unbounded quantifier applied to a group that already repeats. Rewrite it so "
+                "only one level repeats without a ceiling (e.g. '(a+)+' -> 'a+')."
+            )
         return value
 
     @model_validator(mode="after")
     def _at_least_one_operator(self) -> Constraint:
         if not self.operators():
             raise ValueError("constraint has no operators; expected at least one of eq/in/matches/...")
+        return self
+
+    @model_validator(mode="after")
+    def _reject_negated_presence(self) -> Constraint:
+        # `present: false` / `absent: false` read as "must be absent" / "must be
+        # present" but were previously silently dropped — a fail-open trap. The
+        # positive forms are unambiguous.
+        if self.present is False:
+            raise ValueError("present: false is ambiguous; use 'absent: true'")
+        if self.absent is False:
+            raise ValueError("absent: false is ambiguous; use 'present: true'")
         return self
 
     def operators(self) -> dict[str, Any]:
@@ -220,6 +245,23 @@ class Rule(StrictModel):
         if value is not None and not value:
             raise ValueError("pattern list is empty; omit the key to match everything")
         return value
+
+    @model_validator(mode="after")
+    def _validate_when_selectors(self) -> Rule:
+        """Reject a malformed selector at load time rather than on first call.
+
+        Covers the root as well as the syntax: `argz.domain` parses fine and
+        only fails when the rule is first reached, where the error escapes as an
+        unaudited protocol failure rather than a decision.
+        """
+        from .matching import SelectorError, validate_selector
+
+        for selector in self.when:
+            try:
+                validate_selector(selector)
+            except SelectorError as exc:
+                raise ValueError(f"invalid selector {selector!r} in 'when': {exc}") from exc
+        return self
 
     def describe(self, index: int) -> str:
         return self.name or f"{self.effect} rule #{index}"
@@ -333,6 +375,23 @@ class AuditConfig(StrictModel):
                 re.compile(pattern)
             except re.error as exc:
                 raise ValueError(f"invalid redact_key_pattern {pattern!r}: {exc}") from exc
+        return value
+
+    @field_validator("redact")
+    @classmethod
+    def _validate_redact_selectors(cls, value: list[str]) -> list[str]:
+        """Check these here as well as in `Redactor`.
+
+        `Redactor.__init__` pre-parses them, but that runs when the gateway
+        starts — so `validate` would pass a config that then refuses to boot.
+        """
+        from .matching import SelectorError, validate_selector
+
+        for selector in value:
+            try:
+                validate_selector(selector)
+            except SelectorError as exc:
+                raise ValueError(f"invalid redact selector {selector!r}: {exc}") from exc
         return value
 
 

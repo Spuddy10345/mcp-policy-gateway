@@ -32,7 +32,14 @@ from .redaction import Redactor
 
 GENESIS_HASH = "0" * 64
 
-Outcome = Literal["allowed", "denied", "rate_limited", "error", "dry-run-allowed"]
+Outcome = Literal[
+    "allowed",
+    "denied",
+    "rate_limited",
+    "error",
+    "dry-run-allowed",
+    "dry-run-rate-limited",
+]
 
 
 @dataclass

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import mcp.types as types
@@ -42,6 +43,19 @@ logger = logging.getLogger(__name__)
 #: appears in every handler signature.
 LifespanState: TypeAlias = "dict[str, Any]"
 RequestContext: TypeAlias = "ServerRequestContext[LifespanState]"
+
+
+@dataclass(frozen=True)
+class _DryRunNote:
+    """What a forwarded call *would* have been, had the mode been `enforce`.
+
+    Dry-run exists so an operator can read the audit log and see what a new
+    policy would do to real traffic. That only works if every would-be block
+    leaves a record — a denial and an exhausted rate limit alike.
+    """
+
+    outcome: Outcome
+    reason: str
 
 
 class Gateway:
@@ -196,6 +210,7 @@ class Gateway:
                 identity, target, arguments, decision, mode, request_id, started, policy
             )
 
+        note: _DryRunNote | None = None
         verdict = await self.limiter.acquire(decision.rate_limits, identity.name)
         if not verdict:
             reason = f"rate limit {verdict.bucket!r} exhausted; retry in {verdict.retry_after:.1f}s"
@@ -214,8 +229,11 @@ class Gateway:
                 )
                 return _error_result(f"Rate limited by policy: {reason}")
             logger.warning("dry-run: would have rate limited %r (%s)", target.gateway_name, reason)
+            note = _DryRunNote("dry-run-rate-limited", f"DRY-RUN: would rate limit ({reason})")
 
-        return await self._forward(identity, target, arguments, decision, mode, request_id, started)
+        return await self._forward(
+            identity, target, arguments, decision, mode, request_id, started, note=note
+        )
 
     # ---------------------------------------------------------------- helpers
 
@@ -233,21 +251,31 @@ class Gateway:
         """Handle a denial, honouring dry-run."""
         del policy  # reserved for per-policy refusal text
 
-        if mode == "dry-run":
+        # Dry-run forwards what policy *would* have blocked, but only when the
+        # policy actually reached a verdict. If it could not be evaluated there
+        # is no verdict to second-guess, and forwarding on a policy the gateway
+        # cannot read is how dry-run turns into no policy at all.
+        if mode == "dry-run" and decision.evaluation_error is None:
             logger.warning(
                 "dry-run: would have denied %s -> %s (%s)",
                 identity.name,
                 target.gateway_name,
                 decision.describe(),
             )
-            result = await self._forward(
-                identity, target, arguments, decision, mode, request_id, started, forced=True
+            return await self._forward(
+                identity,
+                target,
+                arguments,
+                decision,
+                mode,
+                request_id,
+                started,
+                note=_DryRunNote("dry-run-allowed", f"DRY-RUN: would deny ({decision.reason})"),
             )
-            return result
 
         await self._record(
             identity,
-            outcome="denied",
+            outcome="error" if decision.evaluation_error else "denied",
             reason=decision.reason,
             target=target.gateway_name,
             upstream=target.upstream,
@@ -257,6 +285,7 @@ class Gateway:
             trace=list(decision.trace),
             request_id=request_id,
             started=started,
+            error=decision.evaluation_error,
         )
         return _error_result(_refusal_text(target.gateway_name, decision))
 
@@ -270,10 +299,10 @@ class Gateway:
         request_id: str | None,
         started: float,
         *,
-        forced: bool = False,
+        note: _DryRunNote | None = None,
     ) -> types.CallToolResult:
         """Send an authorised call upstream and record what came back."""
-        outcome: Outcome = "dry-run-allowed" if forced else "allowed"
+        outcome: Outcome = note.outcome if note else "allowed"
         error: str | None = None
 
         try:
@@ -294,7 +323,7 @@ class Gateway:
         await self._record(
             identity,
             outcome=outcome,
-            reason=decision.reason if not forced else f"DRY-RUN: would deny ({decision.reason})",
+            reason=note.reason if note else decision.reason,
             target=target.gateway_name,
             upstream=target.upstream,
             arguments=arguments,

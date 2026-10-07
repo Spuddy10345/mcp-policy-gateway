@@ -21,12 +21,21 @@ from typing import Any
 
 from .config import Constraint
 
-#: Values longer than this are not handed to a regular expression. Tool
-#: arguments are attacker-influenced whenever the model reads untrusted
-#: content, and a policy author's innocent-looking pattern can backtrack
-#: catastrophically on a crafted string. Truncating bounds the work; a
+#: Values longer than this are not handed to a regular expression, and a
 #: `matches` constraint on an over-long value fails closed.
+#:
+#: This is a cap on input size, *not* on work. Backtracking is exponential in
+#: the input length, so a pattern that can backtrack catastrophically will hang
+#: long before it reaches this bound — 30 characters is already enough. The
+#: defence against that is `unsafe_repetition`, which refuses such patterns when
+#: the config loads; this cap only keeps well-formed patterns from being handed
+#: megabyte-sized arguments.
 MAX_REGEX_INPUT = 4096
+
+#: The roots a selector may start from. Kept next to `MatchContext.root`, which
+#: is the thing that has to agree with it, and exported so config validation can
+#: reject a typo'd root before the gateway starts rather than on the first call.
+SELECTOR_ROOTS = frozenset({"args", "tool", "resource", "prompt", "upstream"})
 
 _SEGMENT = re.compile(r"([^.\[\]]+)|\[(\*|-?\d+)\]")
 
@@ -56,9 +65,7 @@ class MatchContext:
             return self.prompt
         if name == "upstream":
             return self.upstream
-        raise SelectorError(
-            f"unknown selector root {name!r}; expected 'args', 'tool', 'resource', 'prompt' or 'upstream'"
-        )
+        raise SelectorError(_unknown_root_message(name))
 
 
 def parse_selector(selector: str) -> list[str | int]:
@@ -112,6 +119,28 @@ def parse_selector(selector: str) -> list[str | int]:
     return parts
 
 
+def _unknown_root_message(name: str) -> str:
+    expected = ", ".join(repr(root) for root in sorted(SELECTOR_ROOTS))
+    return f"unknown selector root {name!r}; expected one of {expected}"
+
+
+def validate_selector(selector: str) -> list[str | int]:
+    """Parse a selector *and* check its root, raising `SelectorError` if either fails.
+
+    `parse_selector` alone is not enough for config validation: `argz.domain`
+    parses perfectly well and only fails when `MatchContext.root` is asked for
+    `argz`, which happens on the first call that reaches the rule. A wrong root
+    is the likeliest selector typo, so it has to be caught at load time too.
+    """
+    parts = parse_selector(selector)
+    root = parts[0]
+    if not isinstance(root, str):
+        raise SelectorError(f"invalid selector {selector!r}: must start with a name")
+    if root not in SELECTOR_ROOTS:
+        raise SelectorError(f"invalid selector {selector!r}: {_unknown_root_message(root)}")
+    return parts
+
+
 def resolve(selector: str, context: MatchContext) -> list[Any]:
     """Return every value the selector addresses.
 
@@ -147,11 +176,91 @@ def _step(values: list[Any], part: str | int) -> list[Any]:
     return result
 
 
+_UNBOUNDED_QUANTIFIER = re.compile(r"\{\d+,\}")
+
+
+def _quantifier_at(pattern: str, position: int) -> str | None:
+    """The unbounded quantifier starting at `position`, if there is one."""
+    if position >= len(pattern):
+        return None
+    if pattern[position] in "*+":
+        return pattern[position]
+    match = _UNBOUNDED_QUANTIFIER.match(pattern, position)
+    return match.group(0) if match else None
+
+
+def _contains_unbounded_quantifier(body: str) -> bool:
+    """Whether `body` repeats something without a ceiling, ignoring escapes and classes."""
+    position = 0
+    in_class = False
+    while position < len(body):
+        character = body[position]
+        if character == "\\":
+            position += 2
+            continue
+        if in_class:
+            in_class = character != "]"
+            position += 1
+            continue
+        if character == "[":
+            in_class = True
+            position += 1
+            continue
+        if _quantifier_at(body, position):
+            return True
+        position += 1
+    return False
+
+
+def unsafe_repetition(pattern: str) -> str | None:
+    """Return the offending fragment if `pattern` can backtrack catastrophically.
+
+    Looks for the dominant shape — an unbounded quantifier applied to a group
+    that already repeats something unbounded, as in `(a+)+` or `(\\d*x)*`. Those
+    take time exponential in the input length, which no cap on input size can
+    make safe, so they are refused when the config loads instead.
+
+    Conservative in both directions and deliberately so: it accepts `(https?)+`
+    (the inner `?` has a ceiling) and it does not catch overlapping alternations
+    like `(a|ab)*`. It is a cheap check for the mistake policy authors actually
+    make, not a decision procedure.
+    """
+    stack: list[int] = []
+    position = 0
+    in_class = False
+
+    while position < len(pattern):
+        character = pattern[position]
+        if character == "\\":
+            position += 2
+            continue
+        if in_class:
+            in_class = character != "]"
+            position += 1
+            continue
+        if character == "[":
+            in_class = True
+        elif character == "(":
+            stack.append(position)
+        elif character == ")" and stack:
+            start = stack.pop()
+            quantifier = _quantifier_at(pattern, position + 1)
+            if quantifier and _contains_unbounded_quantifier(pattern[start + 1 : position]):
+                return pattern[start : position + 1 + len(quantifier)]
+        position += 1
+
+    return None
+
+
 @dataclass(frozen=True)
 class ConstraintResult:
     """Whether a constraint held, and a reason to put in the audit log."""
 
     satisfied: bool
+    #: Why. Never contains a caller-supplied value: this string is copied into
+    #: the audit log's `trace` and into the refusal handed back to the caller,
+    #: neither of which goes through `redaction.Redactor`. The value that failed
+    #: is in the record's `arguments`, redacted according to policy.
     detail: str
 
     def __bool__(self) -> bool:
@@ -173,9 +282,11 @@ def evaluate_constraint(selector: str, constraint: Constraint, context: MatchCon
     if constraint.absent:
         return ConstraintResult(False, f"{selector} is present but required to be absent")
 
-    checks = {name: value for name, value in operators.items() if name not in ("present", "absent")}
+    # `absent` is handled above. `present` (always `true` — the negated form is
+    # rejected at config load) means "resolves to a non-null value", which the
+    # operator table checks explicitly rather than treating as a no-op.
+    checks = {name: value for name, value in operators.items() if name != "absent"}
     if not checks:
-        # `present: true` on its own; the non-empty resolution above is the test.
         return ConstraintResult(True, f"{selector} present")
 
     outcomes = [(value, _check_value(value, checks)) for value in values]
@@ -189,7 +300,7 @@ def evaluate_constraint(selector: str, constraint: Constraint, context: MatchCon
     if failures:
         value, detail = failures[0]
         suffix = f" ({len(failures)} of {len(outcomes)} values failed)" if len(outcomes) > 1 else ""
-        return ConstraintResult(False, f"{selector}={_render(value)} {detail}{suffix}")
+        return ConstraintResult(False, f"{selector} ({_describe(value)}) {detail}{suffix}")
     return ConstraintResult(True, f"{selector} satisfied")
 
 
@@ -300,9 +411,35 @@ _OPERATORS: dict[str, Any] = {
 
 
 def _render(value: Any) -> str:
-    """Compact, bounded rendering of a value for a decision reason."""
+    """Compact, bounded rendering of a value for a decision reason.
+
+    Only ever applied to operands, which come from the policy file. Caller-
+    supplied values go through `_describe` instead.
+    """
     text = repr(value)
     return text if len(text) <= 80 else text[:77] + "..."
+
+
+def _describe(value: Any) -> str:
+    """Say what a caller-supplied value *was like*, never what it was.
+
+    Constraint details end up in the audit log's `trace` and in the text handed
+    back to the caller. Neither passes through `redaction.Redactor`, so putting
+    the value itself here wrote tool arguments to disk in the clear — past both
+    the configured redaction rules and `include_arguments: false`. The shape of
+    the value is enough to debug a policy; the value is in `arguments`.
+    """
+    if value is None or isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, int | float):
+        return "a number"
+    if isinstance(value, str):
+        return f"a {len(value)}-character string"
+    if isinstance(value, list | tuple):
+        return f"a {len(value)}-element list"
+    if isinstance(value, dict):
+        return f"an object with {len(value)} key(s)"
+    return type(value).__name__
 
 
 def matches_any(name: str, patterns: list[str] | None) -> bool:

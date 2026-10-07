@@ -9,8 +9,15 @@ from __future__ import annotations
 import textwrap
 
 import pytest
+from pydantic import ValidationError
 
-from mcp_policy_gateway.config import GatewayConfig, StdioUpstream, load_config, parse_duration
+from mcp_policy_gateway.config import (
+    Constraint,
+    GatewayConfig,
+    StdioUpstream,
+    load_config,
+    parse_duration,
+)
 from mcp_policy_gateway.errors import ConfigError
 
 MINIMAL = """
@@ -226,6 +233,20 @@ def test_scalar_when_value_is_shorthand_for_eq():
     assert policy.rules[0].when["args.domain"].eq == "light"
 
 
+@pytest.mark.parametrize("selector", [".args", "args..domain", "args.", "args.domain."])
+def test_malformed_when_selector_is_rejected_at_load(selector):
+    with pytest.raises(ValidationError):
+        GatewayConfig.model_validate(
+            {
+                "version": 1,
+                "upstreams": {"hass": {"transport": "stdio", "command": "x"}},
+                "policies": {
+                    "p": {"rules": [{"effect": "allow", "tools": ["t"], "when": {selector: "x"}}]}
+                },
+            }
+        )
+
+
 def test_empty_pattern_list_is_rejected():
     """`tools: []` reads as "no tools" but would match everything."""
     with pytest.raises(ValueError, match="omit the key"):
@@ -248,3 +269,50 @@ def test_policy_for_rejects_an_unknown_name(tmp_path):
     config = load_config(write(tmp_path, MINIMAL))
     with pytest.raises(ConfigError, match="unknown policy"):
         config.policy_for("ghost")
+
+
+# ------------------------------------------------ selector and regex validation
+
+
+@pytest.mark.parametrize("selector", ["argz.domain", "arg.domain", "params.x", "domain"])
+def test_unknown_selector_root_is_rejected_at_load(selector):
+    """Parsing is not enough: `argz.domain` parses, then fails on the first call."""
+    with pytest.raises(ValidationError, match="unknown selector root"):
+        GatewayConfig.model_validate(
+            {
+                "version": 1,
+                "upstreams": {"hass": {"transport": "stdio", "command": "x"}},
+                "policies": {
+                    "p": {"rules": [{"effect": "allow", "tools": ["t"], "when": {selector: "x"}}]}
+                },
+            }
+        )
+
+
+@pytest.mark.parametrize("selector", ["argz.password", "args..password", "args."])
+def test_bad_audit_redact_selector_is_rejected_at_load(selector):
+    """`Redactor` pre-parses these, but only at startup — `validate` must catch them too."""
+    with pytest.raises(ValidationError):
+        GatewayConfig.model_validate(
+            {
+                "version": 1,
+                "upstreams": {"hass": {"transport": "stdio", "command": "x"}},
+                "policies": {"p": {"rules": []}},
+                "audit": {"redact": [selector]},
+            }
+        )
+
+
+@pytest.mark.parametrize("pattern", ["(a+)+b", "(a*)*", "(x|y)(\\d+)+", "([a-z]+)*z", "(a+){2,}"])
+def test_catastrophic_regex_is_rejected_at_load(pattern):
+    """No cap on input length makes exponential backtracking safe; refuse the pattern."""
+    with pytest.raises(ValidationError, match="backtrack catastrophically"):
+        Constraint.model_validate({"matches": pattern})
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["light\\..*", "(https?)://.*", "(a|b)+", "[0-9]+", "\\(a+\\)+", "(ab){2,4}", "(a+)?"],
+)
+def test_ordinary_regexes_still_load(pattern):
+    assert Constraint.model_validate({"matches": pattern}).matches == pattern
