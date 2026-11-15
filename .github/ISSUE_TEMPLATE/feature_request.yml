@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose a new capability, constraint type, or CLI command.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What can't you express or do today?
+      description: A concrete policy or scenario you couldn't write, not just "more flexibility".
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would the config or CLI look like?
+      description: A sketch is fine. If it changes the policy language, note how it interacts with existing rule ordering / matching semantics.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried with the current rule set?
+      description: Sometimes the answer is "compose these two existing constraints" rather than a new feature — worth ruling that out first.
+    validations:
+      required: false
