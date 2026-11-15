@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload coverage
         if: matrix.python == '3.12' && matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage.xml
@@ -166,7 +166,7 @@ jobs:
           /tmp/clean/bin/mcp-policy-gateway --version
           /tmp/clean/bin/mcp-policy-gateway validate -c demo/policy.yaml --strict
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
